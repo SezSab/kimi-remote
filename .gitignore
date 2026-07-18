@@ -1,0 +1,11 @@
+# secrets & local state — never commit
+.env
+vapid.json
+push-subs.json
+session-map.json
+certs/
+logs/
+*.log
+
+# OS noise
+.DS_Store

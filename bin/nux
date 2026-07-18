@@ -1,0 +1,321 @@
+#!/usr/bin/env bash
+# nux — Kimi CLI session navigator
+# Interactive picker over tmux sessions.
+# Keys: ↑/↓ or k/j navigate · ⏎ open · n new · d kill · R rename · r refresh · q quit
+# Inside a session: ← at line start (or Ctrl+←) = back to list.
+# Usage: nux            interactive picker (plain list when not a TTY)
+#        nux ls         plain list
+#        nux <name>     attach directly
+set -u
+export LC_ALL=en_US.UTF-8
+
+BUSY_SECONDS=6
+REFRESH_SECONDS=2
+
+# ── palette (256-color, "luxury": gold / champagne / deep indigo) ────────────
+BOLD=$(tput bold 2>/dev/null); DIM=$(tput dim 2>/dev/null); RST=$(tput sgr0 2>/dev/null)
+GOLD=$(tput setaf 178 2>/dev/null)     # deep gold — title, separators, key letters
+GOLD2=$(tput setaf 222 2>/dev/null)    # champagne — selected name
+ROSE=$(tput setaf 205 2>/dev/null)     # rose — session names
+CYANC=$(tput setaf 81 2>/dev/null)     # soft cyan — cwd
+GRAY=$(tput setaf 244 2>/dev/null)     # age / dim text on selection
+PV=$(tput setaf 250 2>/dev/null)       # preview
+BGREEN=$(tput setaf 108 2>/dev/null)   # busy dot: soft sage (not neon)
+IDOT=$(tput setaf 240 2>/dev/null)     # idle dot
+SELBG=$(tput setab 236 2>/dev/null)   # selected bar: soft charcoal (subtle elevation)
+SELFG=$(tput setaf 231 2>/dev/null)   # selected bar: bright fg
+RED=$(tput setaf 1 2>/dev/null)
+CYAN=$(tput setaf 6 2>/dev/null)
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+ago() { # epoch -> short relative
+  local d=$(( $(date +%s) - $1 ))
+  (( d < 0 )) && d=0
+  if   (( d < 60 ));    then printf '%ds'  "$d"
+  elif (( d < 3600 ));  then printf '%dm'  $(( d / 60 ))
+  elif (( d < 86400 )); then printf '%dh'  $(( d / 3600 ))
+  else                       printf '%dd'  $(( d / 86400 ))
+  fi
+}
+
+trunc() { # str maxlen -> str, trimmed with …
+  local s=$1 m=$2
+  if (( ${#s} > m )); then printf '%s…' "${s:0:m-1}"; else printf '%s' "$s"; fi
+}
+
+NAMES=(); CWDS=(); ACTS=(); BUSYS=(); PREVS=(); TITLES=(); KEYS=(); DIFFS=(); PREV_NAMES=()
+
+kimi_state_table() { # one scan of kimi session states: workDir \t createdEpoch \t updatedEpoch \t title
+python3 - <<'PY' 2>/dev/null
+import json, glob, os, datetime
+def epoch(s):
+    try: return int(datetime.datetime.fromisoformat(str(s).replace('Z','+00:00')).timestamp())
+    except Exception: return 0
+for p in glob.glob(os.path.expanduser('~/.kimi-code/sessions/*/session_*/state.json')):
+    try:
+        d = json.load(open(p))
+        t = str(d.get('title','') or '').replace('\t',' ').replace('\n',' ').strip()
+        try: wu = int(os.path.getmtime(os.path.join(os.path.dirname(p), 'agents', 'main', 'wire.jsonl')))
+        except Exception: wu = epoch(d.get('updatedAt'))
+        print('%s\t%d\t%d\t%s\t%s\t%d' % (d.get('workDir') or '-', epoch(d.get('createdAt')), epoch(d.get('updatedAt')), os.path.basename(os.path.dirname(p)), t, wu))
+    except Exception: pass
+PY
+}
+
+match_title() { # stdin=state table, $1=cwd(abs), $2=tmux created epoch, $3=pane activity epoch
+  # v3 (kimi source): createdAt is immutable identity; updatedAt bumps per prompt.
+  local cwd=$1 tcreated=$2 act=$3 wd ce ue key ti cd ad
+  local bcd=121 bcd_key='' bcd_t='' bcue=0 bad=1801 bad_key='' bad_t='' bad_d=0 bue=0 wu=0
+  while IFS=$'\t' read -r wd ce ue key ti wu; do
+    [[ $wd == "$cwd" || $wd == "-" ]] || continue
+    cd=$(( ce > tcreated ? ce - tcreated : tcreated - ce ))
+    (( cd < bcd )) && { bcd=$cd; bcd_key=$key; bcd_t=$ti; bcue=$wu; }
+    ad=$(( wu > act ? wu - act : act - wu ))
+    (( ad < bad )) && { bad=$ad; bad_key=$key; bad_t=$ti; bad_d=$ad; bue=$wu; }
+  done
+  # v5: fresh wire (<15min) & newer-than-birth activity match overrules birth match
+  if (( bad <= 1800 )) && (( $(date +%s) - bue < 900 )) && { (( bcd > 120 )) || (( bue > bcue )); }; then
+    printf '%s|%s|%s' "$bad_key" "$bad_d" "$bad_t"
+  elif (( bcd <= 120 )); then printf '%s|%s|%s' "$bcd_key" "$bcd" "$bcd_t"
+  elif (( bad <= 1800 )); then printf '%s|%s|%s' "$bad_key" "$bad_d" "$bad_t"; fi
+}
+
+load_sessions() {
+  NAMES=(); CWDS=(); ACTS=(); BUSYS=(); PREVS=(); TITLES=(); KEYS=(); DIFFS=()
+  local now name created activity cwd pane preview busy states
+  local N_NAMES=() N_CWDS=() N_ACTS=() N_BUSYS=() N_PREVS=() N_TITLES=() N_KEYS=() N_DIFFS=() i j found
+  now=$(date +%s)
+  states=$(kimi_state_table)
+  while IFS=$'\t' read -r name created activity cwd pcmd; do
+    [[ -n $name ]] || continue
+    pane=$(tmux capture-pane -p -t "$name" 2>/dev/null)
+    pane=${pane%"${pane##*[![:space:]]}"}            # rtrim
+    preview=${pane##*$'\n'}                           # last non-empty line
+    preview="${preview#"${preview%%[![:space:]]*}"}"  # ltrim
+    (( now - activity < BUSY_SECONDS )) && busy=1 || busy=0
+    N_NAMES+=("$name"); N_CWDS+=("${cwd/#$HOME/~}"); N_ACTS+=("$activity"); N_BUSYS+=("$busy"); N_PREVS+=("$preview")
+    if [[ $pcmd == kimi ]]; then
+      # definitive: last "Session: session_uuid" banner in the pane scrollback
+      local sid m
+      sid=$(tmux capture-pane -pS -3000 -t "$name" 2>/dev/null | grep -oE 'Session:[[:space:]]{2,}session_[a-f0-9-]{8,}' | tail -1 | grep -oE 'session_[a-f0-9-]{8,}')
+      if [[ -n $sid ]]; then
+        m=$(awk -F'\t' -v k="$sid" '$4==k {print $4"|0|"$5; exit}' <<< "$states")
+      fi
+      [[ -z ${m:-} ]] && m=$(match_title "$cwd" "$created" "$activity" <<< "$states")
+      local rest=${m#*|}
+      N_KEYS+=("${m%%|*}"); N_DIFFS+=("${rest%%|*}"); N_TITLES+=("${rest#*|}")
+    else
+      N_KEYS+=(''); N_DIFFS+=(''); N_TITLES+=('')
+    fi
+  done < <(tmux ls -F '#{session_name}	#{session_created}	#{session_activity}	#{pane_current_path}	#{pane_current_command}' 2>/dev/null | sort -t$'\t' -k3,3nr)
+  # stable order: keep previous positions (no jumping under the cursor);
+  # first load is sorted by activity, new sessions append at the end
+  for (( j=0; j<${#PREV_NAMES[@]}; j++ )); do
+    for (( i=0; i<${#N_NAMES[@]}; i++ )); do
+      if [[ ${N_NAMES[i]} == "${PREV_NAMES[j]}" ]]; then
+        NAMES+=("${N_NAMES[i]}"); CWDS+=("${N_CWDS[i]}"); ACTS+=("${N_ACTS[i]}"); BUSYS+=("${N_BUSYS[i]}"); PREVS+=("${N_PREVS[i]}"); TITLES+=("${N_TITLES[i]}"); KEYS+=("${N_KEYS[i]}"); DIFFS+=("${N_DIFFS[i]}")
+        break
+      fi
+    done
+  done
+  for (( i=0; i<${#N_NAMES[@]}; i++ )); do
+    found=0
+    for (( j=0; j<${#NAMES[@]}; j++ )); do [[ ${NAMES[j]} == "${N_NAMES[i]}" ]] && { found=1; break; }; done
+    (( found )) && continue
+    NAMES+=("${N_NAMES[i]}"); CWDS+=("${N_CWDS[i]}"); ACTS+=("${N_ACTS[i]}"); BUSYS+=("${N_BUSYS[i]}"); PREVS+=("${N_PREVS[i]}"); TITLES+=("${N_TITLES[i]}"); KEYS+=("${N_KEYS[i]}"); DIFFS+=("${N_DIFFS[i]}")
+  done
+  # dedupe: one kimi session → at most one pane (smallest activity-diff keeps the title)
+  for (( i=0; i<${#NAMES[@]}; i++ )); do
+    [[ -n ${KEYS[i]:-} ]] || continue
+    for (( j=i+1; j<${#NAMES[@]}; j++ )); do
+      [[ ${KEYS[j]:-} == "${KEYS[i]}" ]] || continue
+      if (( ${DIFFS[j]:-0} < ${DIFFS[i]:-0} )); then TITLES[i]=''; else TITLES[j]=''; fi
+    done
+  done
+  PREV_NAMES=("${NAMES[@]}")
+}
+
+print_table() { # non-interactive dump
+  local i st
+  load_sessions
+  if ((${#NAMES[@]} == 0)); then echo "nux: no tmux sessions. Start one: tmux new -s kr-main -c \"\$PWD\" kimi"; return; fi
+  printf '%-2s %-18s %-26s %-5s %-6s %s\n' '' NAME CWD AGE STATUS PREVIEW
+  for (( i=0; i<${#NAMES[@]}; i++ )); do
+    st=idle; (( BUSYS[i] )) && st=busy
+    printf '%-2s %-18s %-26s %-5s %-6s %s\n' "$((( BUSYS[i] )) && echo '●' || echo '○')" \
+      "${NAMES[i]}" "${CWDS[i]}" "$(ago "${ACTS[i]}")" "$st" "${PREVS[i]}"
+  done
+}
+
+attach() { # name -> attach or switch-client; returns when detached/exited
+  local name=$1
+  printf '\n%s→%s attaching to %s%s%s — %s← at start of input (or Ctrl+←) = back to list%s\n' \
+    "$GOLD" "$RST" "$ROSE" "$name" "$RST" "$DIM" "$RST"
+  settitle "✦ nux · $name"
+  if [[ -n ${TMUX:-} ]]; then tmux switch-client -t "$name"
+  else tmux attach-session -t "$name"; fi
+  settitle '✦ nux'
+}
+
+attach_direct() {
+  load_sessions
+  local i
+  for (( i=0; i<${#NAMES[@]}; i++ )); do [[ ${NAMES[i]} == "$1" ]] && { attach "$1"; exit $?; }; done
+  echo "nux: no session '$1'"; print_table; exit 1
+}
+
+# ── non-interactive modes ────────────────────────────────────────────────────
+[[ ${1:-} == ls ]] && { print_table; exit 0; }
+[[ -n ${1:-} ]]    && { attach_direct "$1"; }
+if [[ ! -t 0 || ! -t 1 ]]; then print_table; exit 0; fi
+
+# ── interactive picker ───────────────────────────────────────────────────────
+command -v tmux >/dev/null || { echo "nux: tmux not found"; exit 1; }
+sel=0
+
+settitle() { printf '\033]2;%s\007' "$1"; }
+cleanup() { tput cnorm 2>/dev/null; settitle ''; }
+trap cleanup EXIT INT TERM
+tput civis 2>/dev/null
+settitle '✦ nux'
+
+new_session() {
+  cleanup
+  local name cwd
+  printf '%s◆ nux%s new session — name, empty = auto: ' "$GOLD" "$RST"
+  read -r -e name
+  name=$(printf '%s' "$name" | tr ' ' '-' | tr -cd 'a-zA-Z0-9_-')
+  [[ -z $name ]] && name="kr-$(date +%s | shasum | cut -c1-6)"
+  printf 'working dir (empty = %s): ' "$PWD"
+  read -r -e cwd
+  cwd=${cwd/#\~/$HOME}; [[ -z $cwd ]] && cwd="$PWD"
+  [[ -d $cwd ]] || { echo "nux: no such dir: $cwd"; sleep 1.5; tput civis 2>/dev/null; return; }
+  tmux new-session -d -s "$name" -c "$cwd" 'kimi -y' 2>/dev/null || { echo "nux: cannot create (name taken?)"; sleep 1.5; tput civis 2>/dev/null; return; }
+  # swarm няма CLI флаг → пусни /swarm on след като TUI-то се вдигне
+  ( sleep 4; tmux send-keys -t "$name" -l -- '/swarm on' 2>/dev/null; sleep 0.4; tmux send-keys -t "$name" -l $'\r' 2>/dev/null ) &
+  attach "$name"
+  tput civis 2>/dev/null
+}
+
+kill_session() {
+  ((${#NAMES[@]} == 0)) && return
+  local name=${NAMES[sel]} ans
+  cleanup
+  printf '%s◆ nux%s kill %s%s%s? the process inside will be terminated. [y/N] ' "$GOLD" "$RST" "$RED" "$name" "$RST"
+  read -r -n1 ans; echo
+  [[ $ans == y || $ans == Y ]] && tmux kill-session -t "$name" 2>/dev/null
+  (( sel > 0 )) && (( sel-- ))
+  tput civis 2>/dev/null
+}
+
+rename_session() {
+  ((${#NAMES[@]} == 0)) && return
+  local old=${NAMES[sel]} new
+  cleanup
+  printf '%s◆ nux%s rename %s%s%s → ' "$GOLD" "$RST" "$ROSE" "$old" "$RST"
+  read -r -e new
+  new=$(printf '%s' "$new" | tr ' ' '-' | tr -cd 'a-zA-Z0-9_-')
+  if [[ -n $new && $new != "$old" ]]; then
+    if tmux rename-session -t "$old" "$new" 2>/dev/null; then
+      NAMES[sel]=$new                    # keep the selection anchored on the renamed session
+      PREV_NAMES=("${NAMES[@]}")
+    else
+      echo "nux: cannot rename"; sleep 1.5
+    fi
+  fi
+  tput civis 2>/dev/null
+}
+
+draw() {
+  local cols n i sep pad namef cwdf agef pv pvmax dotc vis
+  cols=$(tput cols)
+  n=${#NAMES[@]}
+  printf -v sep '%*s' "$cols" ''; sep=${sep// /─}
+  pvmax=$(( cols - 58 )); (( pvmax < 0 )) && pvmax=0
+
+  tput cup 0 0 2>/dev/null; tput ed 2>/dev/null
+  printf ' %s◆ nux%s %s—%s %skimi sessions%s %s%d%s\n' "$GOLD" "$RST" "$DIM" "$RST" "$BOLD" "$RST" "$GOLD" "$n" "$RST"
+  printf '%s%s%s\n' "$GOLD" "$sep" "$RST"
+
+  (( n == 0 )) && printf '\n %sno sessions — press n to start one%s\n' "$DIM" "$RST"
+  for (( i=0; i<${#NAMES[@]}; i++ )); do
+    namef=$(trunc "${NAMES[i]}" 18)
+    cwdf=$(trunc "${CWDS[i]}" 24)
+    agef=$(ago "${ACTS[i]}")
+    # display: user-renamed tmux session (not kimi/kr-auto) → tmux name leads;
+    # auto-named with a kimi /title → title leads, handle goes dim into the preview
+    if [[ ${NAMES[i]} != kimi && ${NAMES[i]} != kr-* ]]; then
+      namef=$(trunc "${NAMES[i]}" 18)
+      if [[ -n ${TITLES[i]} ]]; then
+        tshow=$(trunc "${TITLES[i]}" 16); tlen=$(( ${#tshow} + 3 ))
+        tseg="${GRAY}${tshow} ${DIM}│ ${PV}"
+      else tseg=''; tlen=0; fi
+    elif [[ -n ${TITLES[i]} ]]; then
+      namef=$(trunc "${TITLES[i]}" 18)
+      tshow=${NAMES[i]}; tlen=$(( ${#tshow} + 3 ))
+      tseg="${GRAY}${tshow} ${DIM}│ ${PV}"
+    else
+      namef=$(trunc "${NAMES[i]}" 18)
+      tseg=''; tlen=0
+    fi
+    # pad name field by char count (Cyrillic titles are multibyte; printf %-18s counts bytes)
+    padn=$(( 18 - ${#namef} )); (( padn < 0 )) && padn=0
+    namef="$namef$(printf '%*s' "$padn" '')"
+    pvw=$pvmax; (( pvw > tlen )) && pvw=$(( pvmax - tlen ))
+    pv=''; (( pvw > 4 )) && pv=$(trunc "${PREVS[i]}" "$pvw")
+    if (( BUSYS[i] )); then dotc=$BGREEN; else dotc=$IDOT; fi
+    if (( i == sel )); then
+      vis=$(( 56 + tlen + ${#pv} ))
+      printf -v pad '%*s' $(( cols > vis ? cols - vis : 0 )) ''
+      printf '%s%s %s❯ %s●%s %s %s%-24s %s%5s  %b%s%s\n' \
+        "$SELBG" "$SELFG" "$GOLD" "$dotc" "$GOLD2" "$namef" "$SELFG" "$cwdf" "$GRAY" "$agef" "${tseg}${pv}" "$pad" "$RST"
+    else
+      printf '   %b%s%s %s%-24s %s%5s%s  %b%s\n' \
+        "$dotc" "$ROSE" "$namef" "$CYANC" "$cwdf" "$GRAY" "$agef" "$RST" "${tseg}${pv}" "$RST"
+    fi
+  done
+
+  printf '%s%s%s\n' "$GOLD" "$sep" "$RST"
+  printf '%s ↑/↓ · ⏎ open · %sn%s new · %sd%s kill · %sR%s rename · %sr%s refresh · %sq%s quit │ ← at start = back%s\n' \
+    "$DIM" "$GOLD" "$DIM" "$GOLD" "$DIM" "$GOLD" "$DIM" "$GOLD" "$DIM" "$GOLD" "$DIM" "$RST"
+  tput ed 2>/dev/null   # clear any residue below the footer (e.g. after detach)
+}
+
+last_load=0
+while true; do
+  now=$(date +%s)
+  if (( now - last_load >= REFRESH_SECONDS )); then
+    selname=''; ((${#NAMES[@]} > 0)) && selname=${NAMES[sel]}   # anchor selection by name
+    load_sessions; last_load=$now
+    sel=0
+    for (( i=0; i<${#NAMES[@]}; i++ )); do [[ ${NAMES[i]} == "$selname" ]] && { sel=$i; break; }; done
+  fi
+  (( sel >= ${#NAMES[@]} )) && sel=$(( ${#NAMES[@]} > 0 ? ${#NAMES[@]} - 1 : 0 ))
+  draw
+
+  IFS= read -rsn1 -t "$REFRESH_SECONDS" k || continue   # tick → reload + redraw
+  if [[ $k == $'\e' ]]; then
+    # bash 3.2 has no fractional `read -t`; 0.1s terminal-level reads via stty+dd.
+    # Read byte-exact ([ + one) so fast repeated arrows are never swallowed.
+    oldstty=$(stty -g)
+    stty -icanon -echo min 0 time 1
+    b2=$(dd bs=1 count=1 2>/dev/null)
+    b3=''
+    [[ $b2 == '[' || $b2 == 'O' ]] && b3=$(dd bs=1 count=1 2>/dev/null)
+    stty "$oldstty"
+    k="$k$b2$b3"
+  fi
+  case "$k" in
+    $'\e[A'|$'\eOA'|k) (( sel > 0 )) && (( sel-- )) ;;
+    $'\e[B'|$'\eOB'|j) (( sel < ${#NAMES[@]} - 1 )) && (( sel++ )) ;;
+    $'\n'|$'\r'|'') ((${#NAMES[@]} > 0)) && { cleanup; attach "${NAMES[sel]}"; tput civis 2>/dev/null; last_load=0; } ;;
+    n|N) new_session; last_load=0 ;;
+    d)   kill_session; last_load=0 ;;
+    R)   rename_session; last_load=0 ;;
+    r)   last_load=0 ;;
+    q|Q|$'\e') break ;;
+  esac
+done
+cleanup
+tput cup $(( ${#NAMES[@]} + 4 )) 0 2>/dev/null || true
+echo

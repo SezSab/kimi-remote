@@ -1,0 +1,1631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Kimi Remote</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0b0e13">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Kimi">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<style>
+/* ═══ Kimi Remote — design tokens ═══ */
+:root {
+  --bg-0:#0b0e13; --bg-1:#10141b; --bg-2:#161c25; --bg-3:#1d242f;
+  --line-1:#232b36; --line-2:#2e3846;
+  --t-1:#e8edf4; --t-2:#aab4c2; --t-3:#78828f;
+  --gold:#d4a02c; --gold-soft:#c9a227; --gold-bg:#221c0d; --gold-line:#d4a02c44; --gold-glow:#d2992218;
+  --sage:#7ba05b; --sage-bg:#7ba05b22;
+  --red:#e5534b; --red-bg:#e5534b18;
+  --r-card:14px; --r-bubble:18px; --r-pill:999px;
+  --ease:cubic-bezier(0.16,1,0.3,1);
+}
+* { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html, body { margin:0; height:100%; background:var(--bg-0); color:var(--t-1); font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif; overscroll-behavior:none; }
+/* position:fixed anchors the app — iOS не може да избута страницата нагоре при
+   отваряне на клавиатурата (и да я остави така след затваряне) */
+body {
+  display:flex; flex-direction:column; padding-top:env(safe-area-inset-top);
+  position:fixed; top:0; left:0; right:0; bottom:0; width:100%;
+  height:100dvh;
+}
+.hidden { display:none !important; }
+.mono, .cwd, .preview, .ktitle, .msg.tool, .slash-name, .chip { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+button { font-family:inherit; transition:transform .12s var(--ease), border-color .2s, background .2s, color .2s; }
+button:active { transform:scale(.96); }
+
+/* ═══ scrollbars ═══ */
+#chatScroll, #listView, #slashMenu, #keybar, #projChips { scrollbar-width:thin; scrollbar-color:var(--line-2) transparent; }
+#chatScroll::-webkit-scrollbar, #listView::-webkit-scrollbar, #slashMenu::-webkit-scrollbar { width:4px; }
+#keybar::-webkit-scrollbar, #projChips::-webkit-scrollbar { height:3px; }
+#chatScroll::-webkit-scrollbar-thumb, #listView::-webkit-scrollbar-thumb, #slashMenu::-webkit-scrollbar-thumb, #keybar::-webkit-scrollbar-thumb { background:var(--line-2); border-radius:2px; }
+
+/* ═══ offline banner ═══ */
+#offline {
+  position:fixed; top:calc(6px + env(safe-area-inset-top)); left:50%; transform:translateX(-50%); z-index:200;
+  background:var(--red-bg); border:1px solid #e5534b66; color:var(--red);
+  font-size:12px; font-weight:600; padding:6px 14px; border-radius:var(--r-pill); backdrop-filter:blur(8px);
+}
+
+/* ═══ LIST VIEW ═══ */
+#listView { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:18px 16px calc(96px + env(safe-area-inset-bottom)); }
+.appHead { display:flex; align-items:center; gap:10px; padding:4px 4px 18px; }
+.appHead h1 { font-size:22px; margin:0; font-weight:700; letter-spacing:-.3px; display:flex; align-items:center; gap:9px; }
+.brand-mark { width:11px; height:11px; border-radius:3.5px; background:linear-gradient(135deg,var(--gold),#8a6d1e); box-shadow:inset 0 1px 0 #ffffff44; }
+.appHead .sub { color:var(--t-3); font-size:12px; margin-top:3px; padding-left:20px; }
+.card {
+  background:var(--bg-1); border:1px solid var(--line-1); border-radius:var(--r-card);
+  padding:15px 16px 13px; margin-bottom:11px; display:block; width:100%; text-align:left;
+  color:var(--t-1); font:inherit; cursor:pointer;
+  transition:border-color .2s var(--ease), background .2s var(--ease), transform .15s var(--ease);
+}
+.card:active { border-color:var(--gold-line); background:var(--bg-2); transform:scale(.995); }
+.card.attention { border-color:var(--gold-line); box-shadow:0 0 0 1px var(--gold-glow), 0 4px 16px #0004; }
+.cardTop { display:flex; align-items:center; gap:8px; }
+.dot { width:8px; height:8px; border-radius:50%; flex:0 0 auto; background:var(--t-3); margin-top:1px; }
+.dot.busy { background:var(--sage); }
+.dot.attn { background:var(--gold); }
+.name { font-weight:600; font-size:16.5px; letter-spacing:-.2px; flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ktitle { color:var(--t-3); font-size:11.5px; flex:0 1 auto; min-width:0; max-width:45%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ago { color:var(--t-3); font-size:12px; flex:0 0 auto; margin-left:auto; }
+.cwd { color:var(--t-3); font-size:12px; margin-top:5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.preview {
+  color:var(--t-2); font-size:13px; margin-top:9px; line-height:1.5;
+  overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+  border-left:2px solid var(--line-2); padding-left:9px;
+}
+.cardSwarm { margin-top:9px; }
+.cardSwarm .cs-label { font-size:11.5px; font-weight:600; color:var(--gold-soft); }
+.cardSwarm .cs-bar { height:4px; border-radius:2px; background:var(--bg-3); margin-top:5px; overflow:hidden; }
+.cardSwarm .cs-fill { height:100%; border-radius:2px; background:linear-gradient(90deg,var(--sage),#9ece8a); transition:width .6s var(--ease); }
+.cardChips { display:flex; gap:5px; flex-wrap:wrap; margin-top:9px; align-items:center; }
+.chip { font-size:11px; color:var(--t-3); background:var(--bg-2); border:1px solid var(--line-1); border-radius:7px; padding:2px 7px; }
+.chip.gold { color:var(--gold-soft); background:var(--gold-bg); border-color:var(--gold-line); font-weight:600; }
+.chip.green { color:#9ece8a; background:var(--sage-bg); border-color:#7ba05b44; }
+.chip.warn { color:var(--gold); background:var(--gold-bg); border-color:var(--gold-line); font-weight:700; }
+.status { font-size:11.5px; margin-top:8px; color:var(--t-3); letter-spacing:.1px; }
+.status.busy { color:var(--sage); }
+.status.attn { color:var(--gold); font-weight:600; }
+.empty { color:var(--t-3); text-align:center; margin-top:70px; font-size:14px; line-height:1.7; }
+#newBtn {
+  position:fixed; right:16px; bottom:calc(20px + env(safe-area-inset-bottom)); z-index:50;
+  width:54px; height:54px; border-radius:50%; border:0; background:var(--gold);
+  color:#241f12; font-size:26px; font-weight:500; line-height:1;
+  box-shadow:0 6px 20px #0006, inset 0 1px 0 #ffffff33; cursor:pointer;
+}
+
+/* ═══ NEW SESSION FORM ═══ */
+#newForm { padding:18px 16px; overflow-y:auto; }
+#newForm .appHead h1 { font-size:19px; }
+#newForm input {
+  width:100%; margin-bottom:11px; padding:13px 14px; border-radius:12px;
+  border:1px solid var(--line-1); background:var(--bg-1); color:var(--t-1); font-size:16px; outline:0;
+  transition:border-color .2s;
+}
+#newForm input:focus { border-color:var(--gold-line); }
+#newForm input::placeholder { color:var(--t-3); }
+#projChips { display:flex; gap:7px; overflow-x:auto; padding:2px 0 12px; }
+#projChips button {
+  flex:0 0 auto; padding:8px 12px; border-radius:10px; border:1px solid var(--line-1);
+  background:var(--bg-1); color:var(--t-2); font-size:12.5px; cursor:pointer;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+#projChips button.sel { border-color:var(--gold-line); background:var(--gold-bg); color:var(--gold-soft); }
+#newForm .row { display:flex; gap:10px; margin-top:4px; }
+.btn { flex:1; padding:13px; border-radius:12px; border:1px solid var(--line-1); background:var(--bg-1); color:var(--t-1); font-size:15px; cursor:pointer; }
+.btn.primary { background:var(--gold); border-color:var(--gold); color:#241f12; font-weight:600; }
+.btn.primary:disabled { opacity:.5; }
+
+/* ═══ TERMINAL / SESSION CHROME ═══ */
+#termView { flex:1; display:flex; flex-direction:column; min-height:0; }
+#termHead { display:flex; align-items:center; gap:8px; padding:9px 12px; background:var(--bg-1); border-bottom:1px solid var(--line-1); }
+#headTitles { flex:1; min-width:0; display:flex; flex-direction:column; }
+#termName { font-size:15px; font-weight:600; letter-spacing:-.2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#termSub { font-size:11px; color:var(--t-3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+#backBtn, #killBtn, #chatToggle { background:none; border:0; color:var(--gold-soft); font-size:19px; padding:5px 7px; cursor:pointer; line-height:1; flex:0 0 auto; }
+#killBtn { color:var(--red); font-size:16px; }
+#scrollBadge { color:var(--gold-soft); font-size:11px; font-weight:700; letter-spacing:.6px; align-self:center; flex:0 0 auto; }
+#term { flex:1; border:0; width:100%; background:#05070a; }
+#termWrap { flex:1; position:relative; min-height:0; display:flex; }
+#gestureLayer { position:absolute; inset:0; touch-action:none; -webkit-user-select:none; user-select:none; }
+#keybar { display:flex; gap:6px; padding:7px 8px calc(7px + env(safe-area-inset-bottom)); background:var(--bg-1); border-top:1px solid var(--line-1); overflow-x:auto; }
+#keybar button {
+  flex:0 0 auto; min-width:42px; height:38px; padding:0 12px; background:var(--bg-2); color:var(--t-2);
+  border:1px solid var(--line-1); border-radius:10px; font:600 13px/1 ui-monospace,monospace; cursor:pointer;
+}
+#keybar button:active, #keybar button.active { background:var(--gold-glow); border-color:var(--gold-line); color:var(--t-1); }
+
+/* ═══ CHAT ═══ */
+#chatWrap { flex:1; min-height:0; background:var(--bg-0); display:flex; flex-direction:column; position:relative; }
+#chatScroll { flex:1; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:20px 16px 14px; }
+#jumpBtn {
+  position:absolute; right:14px; bottom:14px; z-index:40;
+  width:38px; height:38px; border-radius:50%; border:1px solid var(--line-2);
+  background:var(--bg-2); color:var(--gold-soft); font-size:17px; cursor:pointer;
+  box-shadow:0 4px 14px #0007;
+}
+#jumpBtn .nbadge { position:absolute; top:-4px; right:-4px; min-width:16px; height:16px; padding:0 4px; border-radius:8px; background:var(--gold); color:#241f12; font-size:10px; font-weight:700; line-height:16px; }
+#thinkLive { display:flex; align-items:center; gap:9px; padding:10px 16px; border-top:1px solid var(--line-1); color:var(--gold-soft); font-size:13px; background:var(--bg-1); }
+#thinkLive .tl-label { font-weight:600; flex:0 0 auto; }
+#thinkLive .tt { color:var(--t-3); font-style:italic; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+.dotpulse { width:7px; height:7px; border-radius:50%; background:var(--gold); flex:0 0 auto; }
+
+.tsep { text-align:center; color:var(--t-3); font-size:11px; letter-spacing:.6px; margin:18px 0 14px; font-weight:600; }
+.tsep::before, .tsep::after { content:'—'; color:var(--line-2); margin:0 8px; }
+
+.msg { margin:0 0 20px; font-size:15.5px; line-height:1.7; word-wrap:break-word; white-space:pre-wrap; }
+.msg.user {
+  margin-left:auto; max-width:84%; width:fit-content;
+  background:var(--gold-bg); border:1px solid var(--gold-line);
+  color:#f0e6c8; padding:11px 15px; border-radius:var(--r-bubble) var(--r-bubble) 5px var(--r-bubble);
+  font-size:15px; line-height:1.55; box-shadow:0 2px 10px #0003;
+}
+.msg.user.sendpending { opacity:.45; }
+.msg.user.delivered { opacity:.7; }
+.msg.user.sendfail { opacity:1; border-color:#e5534b88; background:#2a1210; color:#f0b6b1; }
+.resend {
+  display:block; margin-top:9px; padding:8px 13px; border-radius:9px;
+  border:1px solid #e5534b66; background:transparent; color:var(--red);
+  font-size:12.5px; font-weight:600; cursor:pointer;
+}
+.msg.assistant { color:var(--t-1); }
+.msg.assistant b { color:#f0e6c8; font-weight:600; }
+.msg a { color:var(--gold-soft); text-decoration:underline; text-underline-offset:2px; }
+.msg.think {
+  color:var(--t-3); font-style:italic; font-size:13.5px; line-height:1.6;
+  border-left:2px solid var(--gold-line); padding:2px 0 2px 12px; margin-bottom:16px; cursor:pointer;
+}
+.msg.think.closed { max-height:3.9em; overflow:hidden; }
+.msg.tool {
+  font-size:12.5px; color:var(--t-3); background:var(--bg-1); border:1px solid var(--line-1);
+  border-radius:10px; padding:7px 11px; margin-bottom:14px; cursor:pointer; line-height:1.5;
+}
+.msg .toolhead { display:flex; align-items:baseline; gap:7px; min-width:0; }
+.msg .toolname { color:var(--gold-soft); font-weight:600; letter-spacing:.2px; flex:0 0 auto; }
+.msg .toolsum { color:var(--t-3); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; min-width:0; }
+.msg .toolok { flex:0 0 auto; color:var(--sage); font-size:10px; }
+.msg .tooldet { margin-top:6px; padding-top:6px; border-top:1px solid var(--line-1); white-space:pre-wrap; color:var(--t-3); }
+.msg .diff { margin-top:6px; padding-top:6px; border-top:1px solid var(--line-1); overflow-x:auto; }
+.dline { display:block; white-space:pre; font-size:12.5px; line-height:1.5; padding:0 6px; border-radius:3px; }
+.dline.del { color:#f0a8a3; background:#e5534b14; }
+.dline.add { color:#b5d99c; background:#7ba05b16; }
+.globe { display:inline-block; font-style:normal; }
+.msg pre {
+  background:#080b10; border:1px solid var(--line-1); padding:10px 12px; border-radius:10px;
+  overflow-x:auto; font-size:13.5px; line-height:1.55; white-space:pre; margin:8px 0;
+}
+.msg code { background:#080b10; border:1px solid var(--line-1); padding:1px 6px; border-radius:6px; font-size:13.5px; color:var(--gold-soft); }
+.msg pre code { border:0; padding:0; color:inherit; }
+.md-h { display:block; font-weight:700; color:#f0e6c8; margin:14px 0 6px; letter-spacing:-.2px; }
+.md-h:first-child { margin-top:2px; }
+.md-h1, .md-h2 { font-size:18.5px; }
+.md-h3, .md-h4 { font-size:16.5px; }
+.md-li { display:block; padding-left:14px; margin:2px 0; }
+.md-num { color:var(--gold-soft); }
+.md-quote { display:block; border-left:2px solid var(--line-2); padding-left:10px; color:var(--t-2); margin:6px 0; }
+.msg.event { text-align:center; color:var(--t-3); font-size:12px; margin:14px 0; white-space:normal; }
+.msg.approval { font-size:12px; padding:4px 10px; border-radius:8px; width:fit-content; margin-bottom:14px; white-space:normal; }
+.msg.approval.ok { color:#9ece8a; background:var(--sage-bg); }
+.msg.approval.no { color:var(--red); background:var(--red-bg); }
+.origin-badge { display:inline-block; margin-left:8px; padding:1px 7px; border-radius:7px; background:var(--gold-glow); color:var(--gold-soft); font-size:11px; font-weight:600; vertical-align:middle; }
+
+/* ═══ COMPOSER ═══ */
+#composer { background:var(--bg-0); padding:9px 10px 4px; }
+#inputBox {
+  display:flex; align-items:flex-end; background:var(--bg-1); border:1px solid var(--line-1);
+  border-radius:var(--r-bubble); padding:4px 4px 4px 14px; position:relative;
+  transition:border-color .2s, box-shadow .2s;
+}
+#inputBox:focus-within { border-color:var(--gold-line); box-shadow:0 0 0 3px var(--gold-glow); }
+#promptInput {
+  flex:1; min-width:0; background:transparent; border:0; outline:0; color:var(--t-1);
+  font-size:16px; font-family:inherit; padding:10px 0; margin:0; resize:none;
+  max-height:132px; line-height:1.45;
+}
+#promptInput::placeholder { color:var(--t-3); }
+#sendPrompt {
+  width:36px; height:36px; border-radius:50%; border:0; background:var(--gold); color:#241f12;
+  font-size:17px; font-weight:700; cursor:pointer; flex:0 0 auto; box-shadow:inset 0 1px 0 #ffffff33; margin-bottom:2px;
+}
+#sendPrompt:disabled { opacity:.35; }
+.msg.user.queued { opacity:.65; border-style:dashed; }
+.qrow { display:flex; align-items:center; gap:8px; margin-top:9px; }
+.qbadge { font-size:10.5px; font-weight:700; letter-spacing:.5px; color:var(--gold-soft); }
+.steerNow, .qcancel {
+  padding:7px 12px; border-radius:9px; border:1px solid var(--gold-line);
+  background:transparent; color:var(--gold-soft); font-size:12.5px; font-weight:600; cursor:pointer;
+}
+.qcancel { border-color:var(--line-2); color:var(--t-3); padding:7px 10px; }
+#controlsRow { display:flex; align-items:center; gap:8px; padding:8px 4px calc(12px + env(safe-area-inset-bottom)); min-height:34px; }
+#modeBadges { display:flex; gap:6px; flex-wrap:wrap; }
+.mbadge { background:var(--gold-bg); border:1px solid var(--gold-line); color:var(--gold-soft); font-size:11px; font-weight:600; padding:3px 8px; border-radius:8px; }
+#photoBtn { width:30px; height:30px; border-radius:50%; background:var(--bg-2); border:1px solid var(--line-1); color:var(--t-2); font-size:14px; cursor:pointer; padding:0; }
+#modelInfo { color:var(--t-3); font-size:12px; white-space:nowrap; }
+
+/* ═══ QUOTA CARD ═══ */
+#quotaCard {
+  background:var(--bg-1); border:1px solid var(--line-1); border-radius:var(--r-card);
+  padding:12px 16px; margin-bottom:14px;
+}
+#quotaCard .q-top { display:flex; align-items:baseline; }
+#quotaCard .q-title { font-weight:700; font-size:13px; color:var(--gold-soft); letter-spacing:.2px; }
+#quotaCard .q-reset { margin-left:auto; color:var(--t-3); font-size:11px; }
+#quotaCard .q-bar { height:6px; border-radius:3px; background:var(--bg-3); margin:9px 0 7px; overflow:hidden; }
+#quotaCard .q-fill { height:100%; border-radius:3px; background:linear-gradient(90deg,var(--gold),#e8c04a); transition:width .5s var(--ease); }
+#quotaCard .q-fill.warn { background:linear-gradient(90deg,#c96a2c,var(--red)); }
+#quotaCard .q-meta { display:flex; gap:14px; color:var(--t-3); font-size:11.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+#qWindows .qw-top { display:flex; align-items:baseline; margin-top:9px; }
+#qWindows .qw-label { font-weight:600; font-size:12px; color:var(--t-2); }
+#qWindows .qw-reset { margin-left:auto; color:var(--t-3); font-size:11px; }
+#qWindows .q-bar { margin:6px 0 0; }
+
+/* ═══ HEAD ICONS / HISTORY / FILE VIEWER / APPROVAL PREVIEW ═══ */
+.headIcon { background:none; border:0; color:var(--gold-soft); font-size:19px; padding:5px 8px; cursor:pointer; line-height:1; }
+.headIcon svg { display:block; }
+#bellBtn:not(.on) { color:var(--t-3); }
+#histView { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:18px 16px calc(40px + env(safe-area-inset-bottom)); }
+#histView .appHead h1 { font-size:19px; }
+.hrow {
+  display:block; width:100%; text-align:left; background:var(--bg-1); border:1px solid var(--line-1);
+  border-radius:12px; padding:12px 14px; margin-bottom:9px; color:var(--t-1); font:inherit; cursor:pointer;
+}
+.hrow:active { border-color:var(--gold-line); background:var(--bg-2); }
+.hrow .ht { font-weight:600; font-size:14.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.hrow .hm { display:flex; gap:10px; margin-top:4px; color:var(--t-3); font-size:11.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+#fileView { position:fixed; inset:0; z-index:120; background:var(--bg-0); display:flex; flex-direction:column; padding-top:env(safe-area-inset-top); }
+#fileHead { display:flex; align-items:center; gap:8px; padding:9px 12px; background:var(--bg-1); border-bottom:1px solid var(--line-1); }
+#fileName { font:600 12.5px ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--gold-soft); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+#fileBody { flex:1; overflow:auto; margin:0; padding:14px 16px calc(20px + env(safe-area-inset-bottom)); font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--t-1); }
+#fileBody .fl { display:block; white-space:pre; }
+#fileBody .fl.hl { background:var(--gold-glow); border-left:2px solid var(--gold); }
+#fileBody .ln { display:inline-block; width:3.2em; color:var(--t-3); user-select:none; }
+.fpath { color:var(--gold-soft); text-decoration:underline; text-underline-offset:2px; cursor:pointer; }
+#approvalPreview {
+  background:#131009; border-top:1px solid var(--gold-line); padding:9px 14px;
+  font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace; color:#e8dbb0;
+  white-space:pre-wrap; word-break:break-all; max-height:130px; overflow-y:auto;
+}
+
+/* ═══ SWARM PANEL ═══ */
+#swarmBar {
+  display:block; padding:8px 16px 0;
+  background:var(--bg-1); border-top:1px solid var(--line-1);
+  font-size:12.5px; color:var(--gold-soft); font-weight:600; cursor:pointer;
+  -webkit-user-select:none; user-select:none;
+}
+#swarmBar .sw-line { display:flex; align-items:center; gap:8px; }
+.sw-progress { height:3px; margin:7px -16px 0; background:var(--line-1); overflow:hidden; }
+.sw-fill { height:100%; width:0%; background:linear-gradient(90deg, var(--sage), #9ece8a); transition:width .6s var(--ease); }
+#swarmBar .sw-count { flex:0 0 auto; }
+#swarmBar .sw-spark { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--t-3); font-weight:400; font-size:11.5px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+#swarmBar .sw-chev { flex:0 0 auto; color:var(--t-3); font-size:11px; }
+#swarmPanel {
+  max-height:38vh; overflow-y:auto; background:var(--bg-1);
+  border-top:1px solid var(--line-1); padding:6px 10px;
+  scrollbar-width:thin; scrollbar-color:var(--line-2) transparent;
+}
+.sw-row { display:flex; align-items:center; gap:8px; padding:6px 6px; border-radius:8px; }
+.sw-row + .sw-row { border-top:1px solid #1a212b; }
+.sw-dot { width:14px; flex:0 0 auto; text-align:center; font-size:10px; color:var(--t-3); }
+.sw-row.on .sw-dot::before { content:''; display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--sage); }
+.sw-row.fin .sw-dot { color:#9ece8a; font-size:11px; }
+.sw-mini { flex:0 0 auto; font:10px ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--sage); letter-spacing:1px; }
+.sw-row.fin .sw-mini { color:var(--t-3); }
+.sw-row.fin .sw-id { color:var(--t-3); }
+.sw-row.fin .sw-act { color:var(--t-3); }
+.sw-id { color:var(--gold-soft); font:600 11.5px ui-monospace,SFMono-Regular,Menlo,monospace; flex:0 0 auto; }
+.sw-row:not(.on) .sw-id { color:var(--t-3); }
+.sw-act { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--t-2); font:11.5px ui-monospace,SFMono-Regular,Menlo,monospace; }
+.sw-row:not(.on) .sw-act { color:var(--t-3); }
+@media (prefers-reduced-motion: no-preference) {
+  .sw-row.on .sw-dot { animation:pulse 1.4s infinite; }
+}
+
+/* ═══ VOICE INPUT ═══ */
+#micBtn {
+  width:36px; height:36px; border-radius:50%; border:1px solid var(--line-2); background:var(--bg-2);
+  color:var(--t-2); font-size:16px; cursor:pointer; flex:0 0 auto; margin:0 6px 2px 0; padding:0;
+}
+#micBtn svg { display:block; margin:auto; }
+#micBtn.rec { background:#2a1210; border-color:#e5534b88; color:var(--red); }
+#sttLive {
+  display:flex; align-items:center; gap:9px; padding:9px 16px;
+  background:var(--gold-bg); border-top:1px solid var(--gold-line);
+  color:#f0e6c8; font-size:14px; line-height:1.45;
+}
+#sttLive .stt-dot { width:8px; height:8px; border-radius:50%; background:var(--red); flex:0 0 auto; }
+#sttLive .stt-text { flex:1; min-height:1.4em; }
+#sttLive .stt-text .partial { color:var(--t-3); font-style:italic; }
+@media (prefers-reduced-motion: no-preference) {
+  #micBtn.rec { animation:pulse 1.2s infinite; }
+  #sttLive .stt-dot { animation:pulse 1s infinite; }
+}
+
+/* ═══ SLASH MENU ═══ */
+#slashMenu {
+  position:absolute; left:0; right:0; bottom:calc(100% + 8px); max-height:320px; overflow-y:auto;
+  background:var(--bg-1); border:1px solid var(--gold-line); border-radius:14px; padding:6px;
+  box-shadow:0 -8px 30px #000a; z-index:60;
+}
+.slash-item { display:flex; gap:10px; align-items:baseline; width:100%; text-align:left; padding:10px 12px; border:0; border-radius:9px; background:transparent; cursor:pointer; }
+.slash-item:active, .slash-item.sel { background:var(--gold-glow); }
+.slash-name { color:var(--gold-soft); font-weight:600; font-size:13.5px; flex:0 0 auto; }
+.slash-desc { color:var(--t-3); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+
+/* ═══ APPROVAL / QUESTION BARS ═══ */
+#approvalBar { display:flex; gap:8px; padding:9px 10px; background:var(--gold-bg); border-top:1px solid var(--gold-line); overflow-x:auto; }
+#approvalBar .ap { flex:1; min-width:max-content; padding:12px 10px; border-radius:10px; font:600 14px/1 inherit; background:var(--bg-1); border:1px solid var(--line-1); color:var(--t-1); cursor:pointer; }
+#approvalBar .ap.yes { border-color:#7ba05b66; color:#9ece8a; }
+#approvalBar .ap.no { border-color:#e5534b55; color:var(--red); }
+#approvalBar .ap.fb { border-color:var(--gold-line); color:var(--gold-soft); }
+#questionBar { background:var(--gold-bg); border-top:1px solid var(--gold-line); padding:11px 14px; }
+#questionBar .q-head { display:flex; align-items:flex-start; gap:8px; }
+#questionBar .q-text { color:#f0e6c8; font-size:14.5px; font-weight:600; margin-bottom:9px; flex:1; line-height:1.45; }
+#qClose { flex:0 0 auto; width:26px; height:26px; border-radius:50%; border:1px solid #e5534b55; background:transparent; color:var(--red); font-size:12px; cursor:pointer; padding:0; }
+#questionBar .q-opts { display:flex; flex-direction:column; gap:7px; }
+#questionBar .q-opt { text-align:left; padding:11px 13px; border-radius:10px; background:var(--bg-1); border:1px solid var(--gold-line); color:var(--t-1); font-size:14px; cursor:pointer; line-height:1.4; transition:border-color .15s, background .15s; }
+#questionBar .q-opt:active { background:var(--gold-glow); }
+#questionBar .q-opt.other { color:var(--gold-soft); border-style:dashed; }
+
+/* ═══ motion ═══ */
+@media (prefers-reduced-motion: no-preference) {
+  .card.new { animation:cardIn .4s var(--ease) both; }
+  @keyframes cardIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
+  .msg { animation:msgIn .22s var(--ease) both; }
+  @keyframes msgIn { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:none; } }
+  .dotpulse { animation:pulse 1.2s infinite; }
+  .msg.tool.pending .toolname { animation:pulse 1.2s infinite; }
+  .dot.busy, .dot.attn { animation:pulse 1.6s infinite; }
+  @keyframes pulse { 50% { opacity:.45; } }
+  #termView { animation:viewIn .25s var(--ease) both; }
+  @keyframes viewIn { from { opacity:0; } to { opacity:1; } }
+  #jumpBtn { animation:cardIn .25s var(--ease) both; }
+}
+</style>
+</head>
+<body>
+
+<div id="offline" class="hidden">⚠ reconnecting…</div>
+
+<!-- ═══ SESSION LIST ═══ -->
+<div id="listView">
+  <div class="appHead">
+    <div>
+      <h1><span class="brand-mark"></span>Kimi Remote</h1>
+      <div class="sub" id="listSub">sessions</div>
+    </div>
+    <span style="flex:1"></span>
+    <button id="histBtn" class="headIcon" title="History"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 2.6-6.4"/><path d="M3 4v4h4"/><path d="M12 7v5l3.5 2"/></svg></button>
+    <button id="bellBtn" class="headIcon" title="Notifications"></button>
+  </div>
+  <div id="quotaCard" class="hidden">
+    <div class="q-top"><span class="q-title">Kimi plan</span><span class="q-reset"></span></div>
+    <div class="q-bar"><div class="q-fill"></div></div>
+    <div id="qWindows"></div>
+    <div class="q-meta"></div>
+  </div>
+  <div id="cards"></div>
+  <div id="emptyState" class="empty hidden">No sessions yet.<br>Tap ＋ to start one.</div>
+</div>
+<button id="newBtn" title="New session">＋</button>
+
+<!-- ═══ HISTORY ═══ -->
+<div id="histView" class="hidden">
+  <div class="appHead">
+    <button id="histBack" class="headIcon">‹</button>
+    <h1>History</h1>
+  </div>
+  <div id="histRows"></div>
+</div>
+
+<!-- ═══ FILE VIEWER ═══ -->
+<div id="fileView" class="hidden">
+  <div id="fileHead">
+    <button id="fileClose" class="headIcon">✕</button>
+    <span id="fileName"></span>
+  </div>
+  <pre id="fileBody"></pre>
+</div>
+
+<!-- ═══ NEW SESSION FORM ═══ -->
+<div id="newForm" class="hidden">
+  <div class="appHead"><h1>New session</h1></div>
+  <input id="fName" placeholder="name (optional, e.g. docai)" autocapitalize="off" autocorrect="off">
+  <input id="fCwd" placeholder="working dir (optional)" autocapitalize="off" autocorrect="off">
+  <div id="projChips"></div>
+  <div class="row">
+    <button class="btn" id="fCancel">Cancel</button>
+    <button class="btn primary" id="fCreate">Create</button>
+  </div>
+</div>
+
+<!-- ═══ SESSION (chat + terminal) ═══ -->
+<div id="termView" class="hidden">
+  <div id="termHead">
+    <button id="backBtn">‹</button>
+    <span class="dot" id="termDot"></span>
+    <div id="headTitles">
+      <span id="termName"></span>
+      <span id="termSub"></span>
+    </div>
+    <span id="scrollBadge" class="hidden">📜 SCROLL</span>
+    <button id="chatToggle" title="Terminal view">🖥</button>
+    <button id="killBtn" title="Kill session">🗑</button>
+  </div>
+  <div id="termWrap">
+    <iframe id="term" allow="clipboard-read; clipboard-write"></iframe>
+    <div id="gestureLayer"></div>
+  </div>
+  <div id="chatWrap" class="hidden">
+    <div id="chatScroll"></div>
+    <button id="jumpBtn" class="hidden" title="Jump to latest">↓<span class="nbadge hidden">0</span></button>
+    <div id="swarmPanel" class="hidden"></div>
+    <div id="swarmBar" class="hidden">
+      <div class="sw-line">
+        <span class="sw-bee">🐝</span>
+        <span class="sw-count"></span>
+        <span class="sw-spark"></span>
+        <span class="sw-chev">▸</span>
+      </div>
+      <div class="sw-progress"><div class="sw-fill"></div></div>
+    </div>
+    <div id="thinkLive" class="hidden">
+      <span class="globe">🌑</span>
+      <span class="tl-label">Thinking…</span>
+      <span class="tt"></span>
+    </div>
+  </div>
+  <div id="questionBar" class="hidden">
+    <div class="q-head"><div class="q-text"></div><button id="qClose" title="Dismiss question">✕</button></div>
+    <div class="q-opts"></div>
+  </div>
+  <div id="approvalWrap" class="hidden">
+    <div id="approvalPreview" class="hidden"></div>
+    <div id="approvalBar">
+      <button data-ap="1" class="ap yes">✓ Approve</button>
+      <button data-ap="2" class="ap yes">✓✓ Session</button>
+      <button data-ap="3" class="ap no">✗ Reject</button>
+      <button data-ap="4" class="ap fb">✎ Feedback</button>
+    </div>
+  </div>
+  <div id="sttLive" class="hidden">
+    <span class="stt-dot"></span>
+    <span class="stt-text"></span>
+  </div>
+  <div id="composer">
+    <div id="inputBox">
+      <div id="slashMenu" class="hidden"></div>
+      <textarea id="promptInput" rows="1" placeholder="Type / for commands" autocapitalize="off" enterkeyhint="send"></textarea>
+      <button id="micBtn" title="Dictate"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg></button>
+      <button id="sendPrompt" title="Send" disabled>↑</button>
+    </div>
+    <div id="controlsRow">
+      <span id="modeBadges"></span>
+      <button id="photoBtn" title="Attach file">📎</button>
+      <input type="file" id="photoInput" class="hidden">
+      <span style="flex:1"></span>
+      <span id="modelInfo"></span>
+      <span id="liveDot" class="globe hidden">🌑</span>
+    </div>
+  </div>
+  <div id="keybar">
+    <button id="scrollToggle" title="Scroll mode">⤒</button>
+    <button id="pgUpBtn">PgUp</button>
+    <button id="pgDnBtn">PgDn</button>
+    <span style="flex:0 0 6px"></span>
+    <button data-k="Escape" data-c="Escape" data-kc="27">Esc</button>
+    <button data-k="Tab" data-c="Tab" data-kc="9">Tab</button>
+    <button data-k="ArrowUp" data-c="ArrowUp" data-kc="38">↑</button>
+    <button data-k="ArrowDown" data-c="ArrowDown" data-kc="40">↓</button>
+    <button data-k="ArrowLeft" data-c="ArrowLeft" data-kc="37">←</button>
+    <button data-k="ArrowRight" data-c="ArrowRight" data-kc="39">→</button>
+    <button data-k="Enter" data-c="Enter" data-kc="13">⏎</button>
+  </div>
+</div>
+
+<script>
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+
+/* iOS keyboard — native-app behavior: приложението се СВИВА до видимия
+   viewport, composer-ът застава точно над клавиатурата, нищо не се крие.
+   (100dvh на iOS не се свива при клавиатура — само visualViewport знае.) */
+(function keyboardFit() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  let raf = 0;
+  // iOS standalone: vv.height подценява свободното място с bottom safe area
+  // (home indicator) + ~22pt константа, когато клавиатурата е отворена.
+  let safeB = 0;
+  {
+    const probe = document.createElement('div');
+    probe.style.cssText = 'position:fixed;bottom:0;height:env(safe-area-inset-bottom);visibility:hidden';
+    document.documentElement.appendChild(probe);
+    requestAnimationFrame(() => { safeB = probe.getBoundingClientRect().height || 0; probe.remove(); });
+  }
+  function fit() {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(() => {
+      const kbOpen = window.innerHeight - vv.height > 150;
+      const corr = kbOpen ? Math.round(safeB + 22) : 0;
+      document.body.style.height = Math.round(vv.height + corr) + 'px';
+      document.body.style.transform = vv.offsetTop > 1 ? `translateY(${Math.round(vv.offsetTop)}px)` : '';
+      window.scrollTo(0, 0);
+      // пишеш → дръж последните съобщения видими над клавиатурата
+      const inp = document.getElementById('promptInput');
+      if (document.activeElement === inp) {
+        const c = document.getElementById('chatScroll');
+        if (c) c.scrollTop = c.scrollHeight;
+      }
+    });
+  }
+  vv.addEventListener('resize', fit);
+  vv.addEventListener('scroll', fit);
+  document.addEventListener('focusout', () => setTimeout(fit, 60));
+  // iOS стреля resize по средата на клавиатурната анимация → догонвай
+  // реалната височина докато се слегне (2s след всеки фокус)
+  document.addEventListener('focusin', () => {
+    let n = 0;
+    const iv = setInterval(() => { fit(); if (++n >= 10) clearInterval(iv); }, 200);
+  });
+  fit();
+})();
+
+/* auto-update: при отваряне/събуждане на PWA-то — ако сървърът има нова версия,
+   изчисти кеша и презареди. localStorage guard пази от reload loop. */
+async function checkVersion() {
+  try {
+    const { v } = await (await fetch('/api/version', { cache: 'no-store' })).json();
+    if (!v) return;
+    const cur = localStorage.getItem('kr_v');
+    localStorage.setItem('kr_v', String(v));
+    if (cur && cur !== String(v)) {
+      if ('caches' in window) {
+        try { for (const k of await caches.keys()) await caches.delete(k); } catch {}
+      }
+      location.reload();
+    }
+  } catch {}
+}
+checkVersion();
+document.addEventListener('visibilitychange', () => { if (!document.hidden) checkVersion(); });
+
+const $ = id => document.getElementById(id);
+const listView = $('listView'), termView = $('termView'), newForm = $('newForm'), newBtn = $('newBtn');
+let current = null, pollTimer = null;
+
+function ago(ts) {
+  const s = Math.max(0, (Date.now() - ts) / 1000 | 0);
+  if (s < 60) return s + 's';
+  if (s < 3600) return (s / 60 | 0) + 'm';
+  if (s < 86400) return (s / 3600 | 0) + 'h';
+  return (s / 86400 | 0) + 'd';
+}
+
+/* offline banner: any failed poll shows it, first success hides it */
+let offlineCount = 0;
+function netOk(ok) {
+  offlineCount = ok ? 0 : offlineCount + 1;
+  $('offline').classList.toggle('hidden', offlineCount < 2);
+}
+
+async function api(path, opts) {
+  let r;
+  try { r = await fetch(path, opts); } catch (e) { netOk(false); throw e; }
+  netOk(true);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+  return r.json();
+}
+
+/* ── list view: keyed card updates (no flicker, no lost taps) ── */
+const cardEls = new Map(); // name -> element
+function buildCard(s, isNew) {
+  let el = cardEls.get(s.name);
+  if (!el) {
+    el = document.createElement('button');
+    el.className = 'card' + (isNew ? ' new' : '');
+    el.innerHTML =
+      '<div class="cardTop"><span class="dot"></span><span class="name"></span>' +
+      '<span class="ktitle"></span><span class="ago"></span></div>' +
+      '<div class="cwd"></div><div class="preview hidden"></div>' +
+      '<div class="cardSwarm hidden"><span class="cs-label"></span><div class="cs-bar"><div class="cs-fill"></div></div></div>' +
+      '<div class="cardChips hidden"></div><div class="status"></div>';
+    el.onclick = () => openSession(s.name);
+    cardEls.set(s.name, el);
+  }
+  const attn = !!s.approval;
+  el.classList.toggle('attention', attn);
+  el.querySelector('.dot').className = 'dot' + (attn ? ' attn' : s.busy ? ' busy' : '');
+  const userNamed = !/^(kimi$|kr-)/.test(s.name);
+  el.querySelector('.name').textContent = userNamed ? s.name : (s.title || s.name);
+  const secondary = userNamed ? s.title : (s.title ? s.name : '');
+  const kt = el.querySelector('.ktitle');
+  kt.textContent = secondary || ''; kt.classList.toggle('hidden', !secondary);
+  el.querySelector('.ago').textContent = ago(s.activity);
+  el.querySelector('.cwd').textContent = s.cwd;
+  const pv = el.querySelector('.preview');
+  pv.textContent = s.preview || ''; pv.classList.toggle('hidden', !s.preview);
+  // chips: model · context · git · tasks/agents · goal
+  const st = s.status || {}, chips = [];
+  if (st.model) chips.push(['', st.model]);
+  if (st.context) chips.push([st.context.pct >= 80 ? 'warn' : '', st.context.pct + '%']);
+  if (st.git) chips.push(['', '⎇ ' + st.git]);
+  for (const m of (st.modes || [])) chips.push(['gold', m]);
+  if (st.goal) chips.push(['gold', '🎯 ' + st.goal.status]);
+  if (st.tasks) chips.push(['green', st.tasks + ' task' + (st.tasks > 1 ? 's' : '')]);
+  if (st.agents) chips.push(['green', st.agents + ' agent' + (st.agents > 1 ? 's' : '')]);
+  const cc = el.querySelector('.cardChips');
+  cc.classList.toggle('hidden', !chips.length);
+  cc.innerHTML = '';
+  for (const [cls, txt] of chips) {
+    const c = document.createElement('span'); c.className = 'chip ' + cls; c.textContent = txt; cc.appendChild(c);
+  }
+  const cs = el.querySelector('.cardSwarm');
+  if (s.swarm && s.swarm.total) {
+    cs.classList.remove('hidden');
+    cs.querySelector('.cs-label').textContent =
+      '🐝 ' + (s.swarm.done >= s.swarm.total ? s.swarm.total + ' agents ✓' : s.swarm.done + '/' + s.swarm.total + ' done · ' + s.swarm.running + ' running');
+    cs.querySelector('.cs-fill').style.width = Math.round(100 * s.swarm.done / s.swarm.total) + '%';
+  } else cs.classList.add('hidden');
+  const stEl = el.querySelector('.status');
+  stEl.className = 'status' + (attn ? ' attn' : s.busy ? ' busy' : '');
+  if (attn) stEl.textContent = '⚠ waiting for approval';
+  else if (s.busy) { stEl.innerHTML = '<span class="globe">🌑</span> working…'; }
+  else stEl.textContent = 'idle — waiting for input';
+  return el;
+}
+/* ── kimi subscription quota (списъка + composer info) ── */
+let quotaAt = 0;
+async function refreshQuota() {
+  if (Date.now() - quotaAt < 30000) return;
+  quotaAt = Date.now();
+  let q;
+  try { q = await api('/api/quota'); } catch { return; }
+  const card = $('quotaCard');
+  card.classList.remove('hidden');
+  const pct = q.weekly.limit ? Math.round(100 * q.weekly.used / q.weekly.limit) : 0;
+  const fill = card.querySelector('.q-fill');
+  fill.style.width = pct + '%';
+  fill.classList.toggle('warn', pct >= 80);
+  card.querySelector('.q-title').textContent = 'Kimi plan · weekly ' + pct + '%';
+  card.querySelector('.q-reset').textContent = q.weekly.reset ? 'resets ' + fmtReset(q.weekly.reset) : '';
+  const qw = $('qWindows');
+  qw.innerHTML = '';
+  for (const w of (q.windows || [])) {
+    const label = w.minutes >= 60 ? (w.minutes / 60) + 'h limit' : w.minutes + 'min limit';
+    const wpct = w.limit ? Math.round(100 * w.used / w.limit) : 0;
+    const top = document.createElement('div'); top.className = 'qw-top';
+    const lb = document.createElement('span'); lb.className = 'qw-label';
+    lb.textContent = label + ' · ' + wpct + '%';
+    const rs = document.createElement('span'); rs.className = 'qw-reset';
+    rs.textContent = w.reset ? 'resets in ' + fmtIn(w.reset) : '';
+    top.append(lb, rs);
+    const bar = document.createElement('div'); bar.className = 'q-bar';
+    const f = document.createElement('div'); f.className = 'q-fill' + (wpct >= 80 ? ' warn' : '');
+    f.style.width = wpct + '%';
+    bar.appendChild(f);
+    qw.append(top, bar);
+  }
+  card.querySelector('.q-meta').textContent = 'parallel: ' + q.parallel.used + '/' + q.parallel.limit;
+  window._quota = q;
+}
+function fmtIn(iso) {                                      // "5д 7ч" / "2ч 10м" / "43м"
+  let s = Math.max(0, (new Date(iso) - Date.now()) / 1000 | 0);
+  const d = s / 86400 | 0, h = (s % 86400) / 3600 | 0, m = (s % 3600) / 60 | 0;
+  if (d) return d + 'd ' + h + 'h';
+  if (h) return h + 'h ' + m + 'm';
+  return m + 'm';
+}
+function fmtReset(iso) {                                   // "след 5д 7ч · чт 24.07, 04:24"
+  const dt = new Date(iso);
+  return 'in ' + fmtIn(iso) + ' · ' +
+    dt.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: '2-digit' }) + ', ' +
+    dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+}
+
+let firstList = true;
+async function refreshList() {
+  refreshQuota();
+  let data;
+  try { data = await api('/api/sessions'); } catch { return; }
+  const cards = $('cards');
+  $('emptyState').classList.toggle('hidden', data.sessions.length > 0);
+  const busyN = data.sessions.filter(s => s.busy).length;
+  $('listSub').textContent = data.sessions.length + ' session' + (data.sessions.length === 1 ? '' : 's') +
+    (busyN ? ' · ' + busyN + ' working' : '');
+  const seen = new Set();
+  let prev = null;
+  for (const s of data.sessions) {
+    seen.add(s.name);
+    const el = buildCard(s, firstList);
+    // insert in order without rebuilding the container
+    if (prev ? el.previousElementSibling !== prev : cards.firstElementChild !== el) {
+      prev ? prev.after(el) : cards.prepend(el);
+    }
+    prev = el;
+  }
+  for (const [name, el] of cardEls) if (!seen.has(name)) { el.remove(); cardEls.delete(name); }
+  firstList = false;
+}
+
+/* ── routing ── */
+function route() {
+  const m = location.hash.match(/^#\/s\/([a-zA-Z0-9_-]+)(\/t)?$/);
+  if (m) showTerm(decodeURIComponent(m[1]), !m[2]);
+  else showList();
+}
+function openSession(name) { location.hash = '#/s/' + encodeURIComponent(name); }
+function showList() {
+  current = null;
+  termView.classList.add('hidden'); newForm.classList.add('hidden');
+  $('histView').classList.add('hidden'); $('fileView').classList.add('hidden');
+  listView.classList.remove('hidden'); newBtn.classList.remove('hidden');
+  $('term').src = 'about:blank';
+  closeStream();
+  clearInterval(pollTimer); pollTimer = setInterval(refreshList, 5000);
+  firstList = true; cardEls.clear(); $('cards').innerHTML = '';
+  refreshList();
+}
+function showTerm(name, chat) {
+  const changed = current !== name;
+  current = name;
+  listView.classList.add('hidden'); newForm.classList.add('hidden'); newBtn.classList.add('hidden');
+  termView.classList.remove('hidden');
+  if (changed) { $('termName').textContent = name; $('termSub').textContent = ''; }
+  clearInterval(pollTimer);
+  pollTimer = setInterval(pollTerm, 5000);
+  pollTerm();
+  chatFellBack = false;
+  if (changed || chat !== chatMode) setMode(chat);
+}
+
+/* ── new session ── */
+let projLoaded = false;
+newBtn.onclick = async () => {
+  listView.classList.add('hidden'); newBtn.classList.add('hidden');
+  newForm.classList.remove('hidden');
+  if (!projLoaded) {
+    projLoaded = true;
+    try {
+      const { projects } = await api('/api/projects');
+      const pc = $('projChips'); pc.innerHTML = '';
+      for (const p of projects) {
+        const b = document.createElement('button');
+        b.textContent = p.name;
+        b.onclick = () => {
+          $('fCwd').value = p.path;
+          for (const x of pc.children) x.classList.toggle('sel', x === b);
+          if (!$('fName').value && p.path !== '~') $('fName').value = p.name.toLowerCase().replace(/[^a-z0-9_-]/g, '-').slice(0, 20);
+        };
+        pc.appendChild(b);
+      }
+    } catch {}
+  }
+};
+$('fCancel').onclick = () => { newForm.classList.add('hidden'); showList(); };
+$('fCreate').onclick = async () => {
+  const btn = $('fCreate');
+  const name = $('fName').value.trim();
+  let cwd = $('fCwd').value.trim();
+  btn.disabled = true; btn.textContent = 'Starting…';
+  try {
+    const s = await api('/api/sessions', { method: 'POST', body: JSON.stringify({ name, cwd }) });
+    $('fName').value = ''; $('fCwd').value = '';
+    for (const x of $('projChips').children) x.classList.remove('sel');
+    openSession(s.name);
+  } catch (e) { alert('Cannot create: ' + e.message); }
+  btn.disabled = false; btn.textContent = 'Create';
+};
+
+/* ── terminal actions ── */
+$('backBtn').onclick = () => { location.hash = ''; };
+let killArm = false, killTimer = null;
+$('killBtn').onclick = async () => {
+  if (!killArm) {
+    killArm = true; $('killBtn').textContent = '⚠️';
+    killTimer = setTimeout(() => { killArm = false; $('killBtn').textContent = '🗑'; }, 3000);
+    return;
+  }
+  clearTimeout(killTimer); killArm = false; $('killBtn').textContent = '🗑';
+  try { await api('/api/sessions/' + current, { method: 'DELETE' }); } catch (e) { alert(e.message); }
+  location.hash = '';
+};
+
+/* ── chat view (wire.jsonl-backed) ── */
+let chatMode = false, chatCount = 0, chatTimer = null, chatFellBack = false, wireKey = '', lastMsgTime = 0, unread = 0;
+function esc(s) { return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+function mdLite(s) {
+  const blocks = [];
+  let h = esc(s);
+  h = h.replace(/```[\w]*\n?([\s\S]*?)```/g, (m, c) => { blocks.push(c.trim()); return '\u0000' + (blocks.length - 1) + '\u0000'; });
+  h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  h = h.replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+  h = h.replace(/\bhttps?:\/\/[^\s<>"')\]]+/g, m => '<a href="' + m + '" target="_blank" rel="noopener">' + m + '</a>');
+  h = h.replace(/(^|[\s(])((?:~|\/(?:Users|home)\/[\w.-]+)\/[\w@%+=.\/-]+?)(?::(\d+))?(?=[\s,;:)!?]|$)/gm,
+    (m, pre, p, ln) => pre + '<span class="fpath" data-path="' + p + '"' + (ln ? ' data-line="' + ln + '"' : '') + '>' + p + (ln ? ':' + ln : '') + '</span>');
+  h = h.replace(/^(#{1,4})\s+(.+)$/gm, (m, hs, t) => '<span class="md-h md-h' + hs.length + '">' + t + '</span>');
+  h = h.replace(/^[-*]\s+(.+)$/gm, '<span class="md-li">• $1</span>');
+  h = h.replace(/^(\d+)\.\s+(.+)$/gm, '<span class="md-li"><span class="md-num">$1.</span> $2</span>');
+  h = h.replace(/^&gt; (.+)$/gm, '<span class="md-quote">$1</span>');
+  h = h.replace(/\u0000(\d+)\u0000/g, (m, i) => '<pre>' + blocks[+i] + '</pre>');
+  return h;
+}
+function nearBottom() {
+  const c = $('chatScroll');
+  return c.scrollHeight - c.scrollTop - c.clientHeight < 80;
+}
+function appendMsg(m) {
+  const cs = $('chatScroll');
+  // time separator on >30min gaps
+  if (m.time && lastMsgTime && m.time - lastMsgTime > 30 * 60 * 1000) {
+    const sep = document.createElement('div');
+    sep.className = 'tsep';
+    sep.textContent = new Date(m.time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    cs.appendChild(sep);
+  }
+  if (m.time) lastMsgTime = m.time;
+  const d = document.createElement('div');
+  if (m.role === 'event') {
+    d.className = 'msg event';
+    d.textContent = (m.kind === 'cancel' ? '⛔ ' : '◦ ') + m.text;
+  } else if (m.role === 'approval') {
+    d.className = 'msg approval ' + (m.decision === 'approved' ? 'ok' : 'no');
+    d.textContent = (m.decision === 'approved' ? '✓ approved' : m.decision === 'cancelled' ? '⊘ cancelled' : '✗ rejected') +
+      ' · ' + (m.name || '') + (m.feedback ? ' — ' + m.feedback : '');
+  } else if (m.role === 'tool') {
+    d.className = 'msg tool' + (m.output == null ? ' pending' : '');
+    const head = document.createElement('div'); head.className = 'toolhead';
+    const nm = document.createElement('span'); nm.className = 'toolname'; nm.textContent = '🔧 ' + (m.name || 'tool');
+    head.appendChild(nm);
+    const sum = document.createElement('span'); sum.className = 'toolsum'; sum.textContent = m.summary || '';
+    head.appendChild(sum);
+    const ok = document.createElement('span'); ok.className = 'toolok'; ok.textContent = m.output == null ? '…' : '✓';
+    head.appendChild(ok);
+    d.appendChild(head);
+    const det = document.createElement('div');
+    if (m.diff) {
+      det.className = 'diff' + (m.name === 'Edit' ? '' : ' hidden');   // edits open by default — виждаш какво е пипал
+      for (const l of (m.diff.old || '').split('\n')) if (m.diff.old) {
+        const s = document.createElement('span'); s.className = 'dline del'; s.textContent = '- ' + l; det.appendChild(s);
+      }
+      for (const l of (m.diff.new || '').split('\n')) if (m.diff.new) {
+        const s = document.createElement('span'); s.className = 'dline add'; s.textContent = '+ ' + l; det.appendChild(s);
+      }
+      if (m.output) {
+        const o = document.createElement('span'); o.className = 'dline'; o.textContent = '→ ' + m.output.split('\n')[0].slice(0, 120); det.appendChild(o);
+      }
+    } else {
+      det.className = 'tooldet hidden';
+      det.innerHTML = mdLite((m.args || '') + (m.output ? '\n→ ' + m.output : ''));
+    }
+    d.appendChild(det);
+    d.onclick = () => det.classList.toggle('hidden');
+  } else if (m.role === 'think') {
+    d.className = 'msg think';
+    d.innerHTML = '💭 ' + mdLite(m.text);
+    d.onclick = () => d.classList.toggle('closed');
+  } else {
+    d.className = 'msg ' + m.role;
+    d.innerHTML = mdLite(m.text);
+    if (m.role === 'user' && m.origin && m.origin !== 'user') {
+      const b = document.createElement('span');
+      b.className = 'origin-badge';
+      b.textContent = { steer: '⚡ steer', goal_continuation: '🎯 goal', cron: '⏰ cron', skill_activation: '🧩 skill', plugin_command: '🔌 plugin', retry: '↩ retry' }[m.origin] || m.origin;
+      d.appendChild(b);
+    }
+  }
+  cs.appendChild(d);
+  return d;
+}
+function updateJump() {
+  const jb = $('jumpBtn'), nb = jb.querySelector('.nbadge');
+  jb.classList.toggle('hidden', nearBottom());
+  nb.textContent = unread > 99 ? '99+' : unread;
+  nb.classList.toggle('hidden', !unread);
+}
+$('chatScroll').addEventListener('scroll', () => {
+  if (nearBottom()) unread = 0;
+  updateJump();
+}, { passive: true });
+$('jumpBtn').onclick = () => {
+  const c = $('chatScroll'); c.scrollTop = c.scrollHeight; unread = 0; updateJump();
+};
+/* ── SSE live stream (opencode-style push) вместо поллинг ── */
+let es = null, chatErrs = 0, msgEls = [];
+function applyStatus(d) {
+  const tl = $('thinkLive');
+  const wasHidden = tl.classList.contains('hidden');
+  const stick = nearBottom();
+  if (d.working) {
+    tl.classList.remove('hidden');
+    tl.querySelector('.tl-label').textContent =
+      d.pendingTool ? '🔧 ' + d.pendingTool : d.thought ? 'Thinking…' : 'Waiting for response…';
+    tl.querySelector('.tt').innerHTML = d.thought ? mdLite(d.thought.slice(0, 160)) : '';
+  } else {
+    tl.classList.add('hidden');
+  }
+  // the bar appearing shrinks the scroll area — don't let it cover the last line
+  if (wasHidden !== tl.classList.contains('hidden') && stick) {
+    $('chatScroll').scrollTop = $('chatScroll').scrollHeight;
+  }
+  $('liveDot').classList.toggle('hidden', !d.working);   // moon in the composer for the whole run
+  const wasWorking = isWorking;
+  isWorking = !!d.working;
+  // flush САМО на истински status от жив stream — watchdog-ът праща синтетичен
+  // working:false (_fake) при умряла връзка и той не значи "turn-ът свърши"
+  if (wasWorking && !isWorking && !d._fake) flushLocalQueue();
+  if ('swarm' in d) renderSwarm(d.swarm);
+  renderQuestion(d.question || null);
+}
+/* ── swarm панел: компактна лента + разгъваем списък на агентите ── */
+let swarmOpen = false, lastSwarm = null;
+function renderSwarm(sw) {
+  lastSwarm = sw;
+  const bar = $('swarmBar'), panel = $('swarmPanel');
+  const stick = nearBottom();
+  if (!sw || !sw.total) {
+    bar.classList.add('hidden'); panel.classList.add('hidden');
+    return;
+  }
+  bar.classList.remove('hidden');
+  const done = sw.done || 0, running = sw.running != null ? sw.running : sw.total - done;
+  bar.querySelector('.sw-count').textContent =
+    done >= sw.total ? sw.total + ' agents ✓' : done + '/' + sw.total + ' done · ' + running + ' running';
+  bar.querySelector('.sw-fill').style.width = Math.round(100 * done / sw.total) + '%';
+  // в лентата: какво прави най-активният агент (един поглед, без разгъване)
+  const top = sw.agents.find(a => (a.writing || a.active) && a.action);
+  bar.querySelector('.sw-spark').textContent = top ? top.id.replace('agent-', '#') + ' ' + top.action : '';
+  bar.querySelector('.sw-chev').textContent = swarmOpen ? '▾' : '▸';
+  panel.classList.toggle('hidden', !swarmOpen);
+  if (swarmOpen) {
+    panel.innerHTML = '';
+    for (const a of sw.agents) {
+      const row = document.createElement('div');
+      row.className = 'sw-row' + (a.done ? ' fin' : ' on');       // незавършил = работи (като kimi TUI)
+      const dot = document.createElement('span'); dot.className = 'sw-dot';
+      dot.textContent = a.done ? '✓' : '';
+      const id = document.createElement('span'); id.className = 'sw-id'; id.textContent = a.id.replace('agent-', '#');
+      const mini = document.createElement('span'); mini.className = 'sw-mini';
+      const f = Math.max(a.done ? 7 : 0, Math.min(7, Math.round(7 * (a.progress || 0))));
+      mini.textContent = '▪'.repeat(f) + '▫'.repeat(7 - f);       // kimi-style estimated progress (кап 85% до завършване)
+      mini.title = (a.ticks || 0) + ' tool calls · ~' + Math.round(100 * (a.progress || 0)) + '%';
+      const act = document.createElement('span'); act.className = 'sw-act';
+      act.textContent = a.action || a.mission || '…';
+      if (a.mission) row.title = a.mission;
+      row.append(dot, id, mini, act);
+      panel.appendChild(row);
+    }
+  }
+  if (stick) $('chatScroll').scrollTop = $('chatScroll').scrollHeight;
+}
+$('swarmBar').onclick = () => { swarmOpen = !swarmOpen; renderSwarm(lastSwarm); };
+function applyPatch(p) {
+  const el = msgEls[p.i];
+  if (!el) return;
+  el.classList.remove('pending');
+  const ok = el.querySelector('.toolok');
+  if (ok) ok.textContent = '✓';
+  const diff = el.querySelector('.diff');
+  if (diff && p.output) {
+    const o = document.createElement('span');
+    o.className = 'dline'; o.textContent = '→ ' + p.output.split('\n')[0].slice(0, 120);
+    diff.appendChild(o);
+  } else if (p.output) {
+    const det = el.querySelector('.tooldet');
+    if (det) det.innerHTML += mdLite('\n→ ' + p.output);
+  }
+}
+function appendBatch(arr) {
+  const stick = nearBottom();
+  for (const m of arr) { confirmPendingSend(m); msgEls.push(appendMsg(m)); }
+  chatCount += arr.length;
+  if (arr.length) {
+    if (stick) { $('chatScroll').scrollTop = $('chatScroll').scrollHeight; unread = 0; }
+    else unread += arr.length;
+    updateJump();
+  }
+}
+function closeStream() { if (es) { es.close(); es = null; } clearTimeout(chatTimer); }
+/* stale-stream watchdog: сървърът пуши status на всеки 2.5s — ако 12s няма нищо,
+   връзката е умряла тихо (iOS suspend) → чисти "working" UI и preconnect */
+let lastEventAt = 0;
+setInterval(() => {
+  if (!chatMode || !current || !es || !lastEventAt) return;
+  if (Date.now() - lastEventAt > 12000) {
+    applyStatus({ working: false, thought: '', question: null, pendingTool: '', _fake: true });
+    closeStream(); openStream();
+  }
+}, 4000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && chatMode && current) { closeStream(); openStream(); }
+});
+function openStream() {
+  if (!chatMode || !current) return;
+  closeStream();
+  lastEventAt = Date.now();
+  es = new EventSource('/api/sessions/' + current + '/events?cursor=' + chatCount);
+  es.onopen = () => { lastEventAt = Date.now(); };
+  for (const evName of ['init', 'batch', 'patch', 'status', 'reset']) {
+    es.addEventListener(evName, () => { lastEventAt = Date.now(); });
+  }
+  es.addEventListener('init', e => {
+    const d = JSON.parse(e.data);
+    chatErrs = 0; netOk(true);
+    if (wireKey && d.key !== wireKey) {   // pane switched sessions between reconnects
+      wireKey = d.key; chatCount = 0; msgEls = []; pendingSends = []; localQueue = []; lastMsgTime = 0; $('chatScroll').innerHTML = '';
+      closeStream(); openStream(); return;
+    }
+    wireKey = d.key;
+    applyStatus(d);
+  });
+  es.addEventListener('batch', e => appendBatch(JSON.parse(e.data)));
+  es.addEventListener('patch', e => { for (const p of JSON.parse(e.data)) applyPatch(p); });
+  es.addEventListener('status', e => applyStatus(JSON.parse(e.data)));
+  es.addEventListener('reset', () => {
+    wireKey = ''; chatCount = 0; msgEls = []; pendingSends = []; localQueue = []; lastMsgTime = 0; $('chatScroll').innerHTML = '';
+    closeStream(); openStream();
+  });
+  es.onerror = async () => {
+    closeStream(); netOk(false); chatErrs++;
+    if (chatMode && !chatFellBack && chatErrs >= 3 && chatCount === 0) {
+      // is this actually a non-kimi pane? ask once via the REST endpoint
+      try { await api('/api/sessions/' + current + '/chat?skip=0'); }
+      catch (e2) {
+        if (/kimi|linked/i.test(String(e2 && e2.message))) { chatFellBack = true; setMode(false); return; }
+      }
+    }
+    chatTimer = setTimeout(openStream, 2500);
+  };
+}
+
+/* ── mode switching: chat (default) ⇄ terminal ── */
+function setMode(chat) {
+  chatMode = chat;
+  $('chatToggle').textContent = chat ? '🖥' : '💬';
+  $('chatWrap').classList.toggle('hidden', !chat);
+  $('termWrap').classList.toggle('hidden', chat);
+  $('keybar').classList.toggle('hidden', chat);
+  if (chat) $('scrollBadge').classList.add('hidden');
+  closeStream();
+  if (chat) {
+    $('term').src = 'about:blank';
+    wireKey = ''; chatCount = 0; lastMsgTime = 0; unread = 0; msgEls = []; chatErrs = 0;
+    pendingSends = []; localQueue = []; isWorking = false;  // опашката е per-сесия — не пътува
+    $('chatScroll').innerHTML = '';
+    updateJump();
+    openStream();
+  } else {
+    $('term').src = '/term/' + current + '/?r=' + Date.now();
+  }
+}
+$('chatToggle').onclick = () => setMode(!chatMode);
+
+/* ── slash command menu: filter + keyboard nav ── */
+let COMMANDS = null, slashSel = -1;
+async function loadCommands() {
+  if (COMMANDS) return COMMANDS;
+  try { COMMANDS = (await api('/api/commands')).commands || []; } catch { COMMANDS = []; }
+  return COMMANDS;
+}
+function closeSlash() { $('slashMenu').classList.add('hidden'); slashSel = -1; }
+function slashItems() { return [...$('slashMenu').querySelectorAll('.slash-item')]; }
+function pickSlash(name) {
+  $('promptInput').value = '/' + name + ' ';
+  closeSlash(); autoGrow(); syncSend(); $('promptInput').focus();
+}
+$('promptInput').addEventListener('input', async () => {
+  autoGrow(); syncSend();
+  const v = $('promptInput').value, m = $('slashMenu');
+  if (!v.startsWith('/') || /\s/.test(v)) { closeSlash(); return; }
+  const cmds = await loadCommands();
+  const q = v.slice(1).toLowerCase();
+  const pre = cmds.filter(c => c.name.toLowerCase().startsWith(q));
+  const inc = cmds.filter(c => !c.name.toLowerCase().startsWith(q) && c.name.toLowerCase().includes(q));
+  const hits = [...pre, ...inc].slice(0, 8);
+  if (!hits.length) { closeSlash(); return; }
+  m.innerHTML = ''; slashSel = -1;
+  for (const c of hits) {
+    const b = document.createElement('button');
+    b.className = 'slash-item';
+    b.innerHTML = `<span class="slash-name">/${esc(c.name)}</span><span class="slash-desc">${esc(c.desc)}</span>`;
+    b.onclick = () => pickSlash(c.name);
+    m.appendChild(b);
+  }
+  m.classList.remove('hidden');
+});
+
+/* ── composer: autogrow textarea, Enter=send / Shift+Enter=newline ── */
+function autoGrow() {
+  const t = $('promptInput');
+  t.style.height = 'auto';
+  t.style.height = Math.min(132, t.scrollHeight) + 'px';
+}
+function syncSend() { $('sendPrompt').disabled = !$('promptInput').value.trim(); }
+$('promptInput').addEventListener('keydown', e => {
+  const menuOpen = !$('slashMenu').classList.contains('hidden');
+  if (menuOpen) {
+    const items = slashItems();
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      slashSel = e.key === 'ArrowDown' ? (slashSel + 1) % items.length : (slashSel - 1 + items.length) % items.length;
+      items.forEach((it, i) => it.classList.toggle('sel', i === slashSel));
+      items[slashSel].scrollIntoView({ block: 'nearest' });
+      return;
+    }
+    if ((e.key === 'Enter' || e.key === 'Tab') && slashSel >= 0) {
+      e.preventDefault(); items[slashSel].click(); return;
+    }
+    if (e.key === 'Escape') { e.preventDefault(); closeSlash(); return; }
+  }
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendPrompt(); }
+});
+
+/* ── voice input: Soniox realtime STT (kazhi протокол) ──
+   final tokens → влизат в textarea (редактируеми); non-final → live лента.
+   Стоп → всичко е в полето, пращаш с ↑. */
+let sttWS = null, sttCtx = null, sttProc = null, sttStream = null, sttFinal = '';
+const MIC_SVG = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>';
+const STOP_SVG = '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" stroke="none"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+function sttStop(keepText) {
+  if (sttWS) { try { sttWS.send(''); } catch {} setTimeout(() => { try { sttWS && sttWS.close(); } catch {} sttWS = null; }, 300); }
+  if (sttProc) { try { sttProc.disconnect(); } catch {} sttProc = null; }
+  if (sttCtx) { try { sttCtx.close(); } catch {} sttCtx = null; }
+  if (sttStream) { for (const t of sttStream.getTracks()) t.stop(); sttStream = null; }
+  $('micBtn').classList.remove('rec'); $('micBtn').innerHTML = MIC_SVG;
+  $('sttLive').classList.add('hidden');
+  if (!keepText) sttFinal = '';
+}
+function sttRender(partial) {
+  const t = $('sttLive').querySelector('.stt-text');
+  t.innerHTML = '';
+  t.appendChild(document.createTextNode(sttFinal.slice(-90)));
+  if (partial) {
+    const p = document.createElement('span');
+    p.className = 'partial'; p.textContent = ' ' + partial;
+    t.appendChild(p);
+  }
+  const inp = $('promptInput');
+  inp.value = sttFinal;
+  autoGrow(); syncSend();
+}
+async function sttStart() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    // http контекст → микрофонът е забранен от iOS; прехвърли към https огледалото
+    if (location.protocol === 'http:' && confirm('Microphone needs HTTPS. Switch to the secure address? (re-add the PWA from there)')) {
+      location.href = '/goto-https';
+    }
+    return;
+  }
+  let conf;
+  try { conf = await api('/api/stt-config'); } catch (e) { alert('STT: ' + e.message); return; }
+  try {
+    sttStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  } catch (e) { alert('Microphone: ' + e.message + (location.protocol === 'http:' ? ' (https required)' : '')); return; }
+  sttFinal = $('promptInput').value ? $('promptInput').value.replace(/\s+$/, '') + ' ' : '';
+  $('micBtn').classList.add('rec'); $('micBtn').innerHTML = STOP_SVG;
+  $('sttLive').classList.remove('hidden');
+  sttRender('');
+  sttWS = new WebSocket(conf.url);
+  sttWS.onopen = () => {
+    sttWS.send(JSON.stringify(conf.config));
+    sttCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = sttCtx.createMediaStreamSource(sttStream);
+    sttProc = sttCtx.createScriptProcessor(4096, 1, 1);
+    const ratio = sttCtx.sampleRate / 16000;
+    sttProc.onaudioprocess = ev => {
+      if (!sttWS || sttWS.readyState !== 1) return;
+      const inb = ev.inputBuffer.getChannelData(0);
+      const out = new Int16Array(Math.floor(inb.length / ratio));
+      for (let i = 0; i < out.length; i++) {
+        const v = Math.max(-1, Math.min(1, inb[Math.floor(i * ratio)]));
+        out[i] = v < 0 ? v * 0x8000 : v * 0x7fff;
+      }
+      sttWS.send(out.buffer);
+    };
+    src.connect(sttProc);
+    sttProc.connect(sttCtx.destination);
+  };
+  sttWS.onmessage = ev => {
+    let d; try { d = JSON.parse(ev.data); } catch { return; }
+    if (d.error_code) { alert('Soniox: ' + (d.error_message || d.error_code)); sttStop(true); return; }
+    let partial = '';
+    for (const t of (d.tokens || [])) {
+      if (!t.text || (t.text.startsWith('<') && t.text.endsWith('>'))) continue;
+      if (t.is_final) sttFinal += t.text;
+      else partial += t.text;
+    }
+    sttRender(partial);
+    if (d.finished) sttStop(true);
+  };
+  sttWS.onerror = () => sttStop(true);
+  sttWS.onclose = () => { if ($('micBtn').classList.contains('rec')) sttStop(true); };
+}
+$('micBtn').onclick = () => {
+  if ($('micBtn').classList.contains('rec')) { sttStop(true); $('promptInput').focus(); }
+  else sttStart();
+};
+
+/* ── photo upload → @-mention in the session ── */
+$('photoBtn').onclick = () => $('photoInput').click();
+$('photoInput').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f || !current) return;
+  const btn = $('photoBtn'); btn.textContent = '⏳';
+  try {
+    const b64 = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result).split(',')[1]);
+      r.onerror = rej;
+      r.readAsDataURL(f);
+    });
+    await api('/api/sessions/' + current + '/upload', { method: 'POST', body: JSON.stringify({ filename: f.name, data: b64 }) });
+    btn.textContent = '✓'; setTimeout(() => { btn.textContent = '📎'; }, 1500);
+    $('promptInput').focus();
+  } catch (err) { alert(err.message); btn.textContent = '📎'; }
+  e.target.value = '';
+});
+
+/* ── optimistic send: pale bubble веднага → delivered → confirmed от wire-а;
+      network fail → червено bubble с ↻ Resend ── */
+let pendingSends = [];
+const normText = t => String(t).replace(/\s+/g, ' ').trim();
+function makeUserBubble(text) {
+  const d = document.createElement('div');
+  d.className = 'msg user sendpending';
+  d.textContent = text;
+  $('chatScroll').appendChild(d);
+  $('chatScroll').scrollTop = $('chatScroll').scrollHeight;
+  return d;
+}
+async function deliver(entry) {
+  entry.el.classList.remove('sendfail');
+  entry.el.classList.add('sendpending');
+  const rb = entry.el.querySelector('.resend'); if (rb) rb.remove();
+  try {
+    await api('/api/sessions/' + current + '/send', { method: 'POST', body: JSON.stringify({ text: entry.text, steer: entry.steer }) });
+    entry.el.classList.remove('sendpending');
+    entry.el.classList.add('delivered');                   // typed into the session; full opacity when the wire confirms
+    if (pendingOther) { pendingOther = false; autoConfirm(); }
+  } catch (e) {
+    entry.el.classList.remove('sendpending', 'delivered');
+    entry.el.classList.add('sendfail');
+    const b = document.createElement('button');
+    b.className = 'resend'; b.textContent = '↻ Resend';
+    b.onclick = ev => { ev.stopPropagation(); deliver(entry); };
+    entry.el.appendChild(b);
+    $('chatScroll').scrollTop = $('chatScroll').scrollHeight;
+  }
+}
+function confirmPendingSend(m) {                           // wire echoed the prompt → swap optimistic for real
+  if (m.role !== 'user') return false;
+  const n = normText(m.text);
+  const i = pendingSends.findIndex(p => normText(p.text) === n);
+  if (i === -1) return false;
+  pendingSends[i].el.remove();
+  pendingSends.splice(i, 1);
+  return false;                                            // still append the real message normally
+}
+/* докато моделът работи: локална опашка — bubble "QUEUED" с бутон Steer.
+   Turn-ът свърши → опашката се излива сама по ред. Steer → инжектира ВЕДНАГА. */
+let isWorking = false, localQueue = [];
+function sendPrompt() {
+  if (sttWS) sttStop(true);                                // send = край на слушането
+  const inp = $('promptInput'), text = inp.value;
+  if (!text.trim() || !current) return;
+  inp.value = ''; autoGrow(); closeSlash(); syncSend();
+  // pendingOther: TUI-то ЧАКА свободния текст (AskUserQuestion "Other…") —
+  // пращай директно, иначе deadlock: то чака нас, ние чакаме него
+  if (isWorking && !pendingOther) { enqueueLocal(text); return; }
+  const entry = { el: makeUserBubble(text), text, steer: false };
+  pendingSends.push(entry);
+  deliver(entry);
+}
+function enqueueLocal(text) {
+  const el = makeUserBubble(text);
+  el.classList.remove('sendpending');
+  el.classList.add('queued');
+  const row = document.createElement('div');
+  row.className = 'qrow';
+  const badge = document.createElement('span'); badge.className = 'qbadge'; badge.textContent = '⏳ QUEUED';
+  const steerB = document.createElement('button'); steerB.className = 'steerNow'; steerB.textContent = '⚡ Steer';
+  const cancelB = document.createElement('button'); cancelB.className = 'qcancel'; cancelB.textContent = '✕';
+  row.append(badge, steerB, cancelB);
+  el.appendChild(row);
+  const q = { el, text };
+  localQueue.push(q);
+  const release = steer => {
+    const i = localQueue.indexOf(q); if (i === -1) return null;
+    localQueue.splice(i, 1); row.remove();
+    el.classList.remove('queued'); el.classList.add('sendpending');
+    const entry = { el, text: q.text, steer };
+    pendingSends.push(entry);
+    return entry;
+  };
+  q.release = release;
+  steerB.onclick = ev => { ev.stopPropagation(); const e2 = release(true); if (e2) deliver(e2); };
+  cancelB.onclick = ev => { ev.stopPropagation(); const i = localQueue.indexOf(q); if (i !== -1) { localQueue.splice(i, 1); el.remove(); } };
+}
+function flushLocalQueue() {
+  while (localQueue.length) {
+    const e2 = localQueue[0].release(false);
+    if (e2) deliver(e2);
+  }
+}
+$('sendPrompt').onclick = () => sendPrompt();
+
+/* ── native-feel swipe scroll over the terminal ── */
+let scrollInflight = false, pendingLines = 0;
+async function scrollLines(n) {
+  n = Math.round(n);
+  if (!n || !current) return;
+  if (scrollInflight) { pendingLines = Math.max(-50, Math.min(50, pendingLines + n)); return; }
+  scrollInflight = true;
+  try { await api('/api/sessions/' + current + '/scroll', { method: 'POST', body: JSON.stringify({ action: 'lines', lines: n }) }); }
+  catch {} finally { scrollInflight = false; }
+  if (pendingLines) { const p = pendingLines; pendingLines = 0; scrollLines(p); }
+}
+(function gestureSetup() {
+  const gl = $('gestureLayer');
+  let gY = 0, gT = 0, gAcc = 0, gMoved = false;
+  gl.addEventListener('touchstart', e => {
+    gY = e.touches[0].clientY; gT = Date.now(); gAcc = 0; gMoved = false;
+  }, { passive: true });
+  gl.addEventListener('touchmove', e => {
+    const y = e.touches[0].clientY, dy = y - gY; gY = y;
+    if (Math.abs(dy) > 2) gMoved = true;
+    gAcc += dy;
+    if (Math.abs(gAcc) >= 12) { const l = Math.trunc(-gAcc / 12); gAcc -= -l * 12; scrollLines(l); }
+  }, { passive: true });
+  gl.addEventListener('touchend', () => {
+    if (!gMoved && Date.now() - gT < 300) {
+      const doc = $('term').contentDocument;
+      const ta = doc && doc.querySelector('textarea');
+      if (ta) ta.focus(); else $('term').focus();
+    }
+    if (Math.abs(gAcc) >= 6) scrollLines(Math.trunc(-gAcc / 12));
+    gAcc = 0;
+  }, { passive: true });
+  gl.addEventListener('wheel', e => {
+    e.preventDefault();
+    const l = -Math.trunc(e.deltaY / 40) || (e.deltaY > 0 ? -1 : 1);
+    scrollLines(l);
+  }, { passive: false });
+})();
+
+/* ── AskUserQuestion interactive card ── */
+let pendingOther = false;
+async function answerQuestion(n, isOther) {
+  try { await api('/api/sessions/' + current + '/keys', { method: 'POST', body: JSON.stringify({ keys: String(n) }) }); }
+  catch (e) { alert(e.message); return; }
+  if (isOther) { pendingOther = true; $('promptInput').focus(); return; }
+  autoConfirm();
+}
+async function autoConfirm() {
+  const qtext = $('questionBar').dataset.q;
+  setTimeout(async () => {
+    try {
+      const d = await api('/api/sessions/' + current + '/chat?skip=99999');
+      if (d.question && d.question.question === qtext) {
+        await api('/api/sessions/' + current + '/keys', { method: 'POST', body: JSON.stringify({ keys: '1' }) });
+      }
+    } catch {}
+  }, 800);
+}
+function renderQuestion(q) {
+  const qb = $('questionBar');
+  if (!q) { qb.classList.add('hidden'); qb.dataset.q = ''; return; }
+  qb.classList.remove('hidden');
+  if (qb.dataset.q === q.question) return;
+  qb.dataset.q = q.question;
+  qb.querySelector('.q-text').textContent = q.question;
+  const opts = qb.querySelector('.q-opts'); opts.innerHTML = '';
+  q.options.forEach((label, i) => {
+    const b = document.createElement('button');
+    b.className = 'q-opt'; b.textContent = label;
+    b.onclick = () => answerQuestion(i + 1, false);
+    opts.appendChild(b);
+  });
+  const other = document.createElement('button');
+  other.className = 'q-opt other'; other.textContent = 'Other…';
+  other.onclick = () => answerQuestion(q.options.length + 1, true);
+  opts.appendChild(other);
+}
+$('qClose').onclick = async () => {
+  try { await api('/api/sessions/' + current + '/keys', { method: 'POST', body: JSON.stringify({ keys: 'esc' }) }); }
+  catch (e) { alert(e.message); }
+  pendingOther = false;
+  $('questionBar').classList.add('hidden');
+};
+
+/* ── approval bar ── */
+for (const b of document.querySelectorAll('#approvalBar .ap')) {
+  b.addEventListener('click', async () => {
+    try { await api('/api/sessions/' + current + '/keys', { method: 'POST', body: JSON.stringify({ keys: b.dataset.ap }) }); }
+    catch (e) { alert(e.message); }
+    if (b.dataset.ap === '4') $('promptInput').focus();
+    setTimeout(pollTerm, 400);
+  });
+}
+
+/* ── scroll controls ── */
+async function scrollAct(action) {
+  if (!current) return;
+  try { await api('/api/sessions/' + current + '/scroll', { method: 'POST', body: JSON.stringify({ action }) }); pollTerm(); }
+  catch (e) { alert(e.message); }
+}
+$('scrollToggle').onclick = () => scrollAct('toggle');
+$('pgUpBtn').onclick = () => scrollAct('up');
+$('pgDnBtn').onclick = () => scrollAct('down');
+
+async function pollTerm() {
+  if (!current) return;
+  try {
+    const d = await api('/api/sessions');
+    const s = d.sessions.find(x => x.name === current);
+    $('termDot').className = 'dot' + (s && (s.approval ? ' attn' : s.busy ? ' busy' : ''));
+    if (s) {
+      const userNamed = !/^(kimi$|kr-)/.test(current);
+      $('termName').textContent = userNamed ? current : (s.title || current);
+      $('termSub').textContent = (userNamed && s.title ? s.title + ' · ' : '') + (s.cwd || '');
+    }
+    $('scrollToggle').classList.toggle('active', !!(s && s.mode));
+    $('scrollBadge').classList.toggle('hidden', !(s && s.mode));
+    $('approvalWrap').classList.toggle('hidden', !(s && s.approval));
+    const ap = $('approvalPreview');
+    if (s && s.approval && s.approvalText) { ap.textContent = s.approvalText; ap.classList.remove('hidden'); }
+    else ap.classList.add('hidden');
+    const mb = $('modeBadges'); mb.innerHTML = '';
+    const st = s && s.status ? s.status : {};
+    const mkBadge = txt => { const b = document.createElement('span'); b.className = 'mbadge'; b.textContent = txt; mb.appendChild(b); };
+    for (const mode of (st.modes || [])) mkBadge(mode);
+    if (st.goal) mkBadge('🎯 ' + st.goal.status);
+    if (st.tasks) mkBadge(st.tasks + (st.tasks > 1 ? ' tasks' : ' task'));
+    if (st.agents) mkBadge(st.agents + (st.agents > 1 ? ' agents' : ' agent'));
+    if (st.git) mkBadge('⎇ ' + st.git);
+    refreshQuota();
+    const qq = window._quota;
+    $('modelInfo').textContent = (st.model || '') + (st.context ? ' · ' + st.context.pct + '%' : '') +
+      (qq ? ' · plan ' + Math.round(100 * qq.weekly.used / (qq.weekly.limit || 1)) + '%' : '');
+    $('liveDot').classList.toggle('hidden', !(s && s.busy));
+  } catch {}
+}
+
+/* ── key bar ── */
+const frame = $('term');
+function sendKey(btn) {
+  const doc = frame.contentDocument;
+  if (!doc) return;
+  const el = doc.activeElement && doc.activeElement !== doc.body ? doc.activeElement
+           : doc.querySelector('textarea') || doc.body;
+  const opts = { key: btn.dataset.k, code: btn.dataset.c, keyCode: +btn.dataset.kc, which: +btn.dataset.kc, bubbles: true, cancelable: true };
+  el.dispatchEvent(new KeyboardEvent('keydown', opts));
+  el.dispatchEvent(new KeyboardEvent('keypress', opts));
+  el.dispatchEvent(new KeyboardEvent('keyup', opts));
+  frame.focus();
+}
+for (const b of document.querySelectorAll('#keybar button')) {
+  if (b.dataset.k) b.addEventListener('click', e => { e.preventDefault(); sendKey(b); });
+}
+
+/* ── MoonSpinner — 1:1 с kimi CLI (frames + 120ms, from the SEA bundle) ── */
+const MOONS = ['🌑', '🌒', '🌓', '🌔', '🌕', '🌖', '🌗', '🌘'];
+let moonI = 0;
+setInterval(() => {
+  moonI = (moonI + 1) % MOONS.length;
+  for (const el of document.querySelectorAll('.globe')) el.textContent = MOONS[moonI];
+}, 120);
+
+/* ── file viewer: тап на пътека в чата ── */
+async function openFile(p, line) {
+  let d;
+  try { d = await api('/api/file?path=' + encodeURIComponent(p)); }
+  catch (e) {
+    // директория/липсващ файл → тихо (пътищата в прозата често са примерни);
+    // само реален проблем с четим файл заслужава alert
+    if (!/not found|not a file/.test(String(e.message))) alert(p + ': ' + e.message);
+    return;
+  }
+  $('fileName').textContent = d.path + (line ? ':' + line : '');
+  const body = $('fileBody');
+  body.innerHTML = '';
+  const lines = d.content.split('\n');
+  const frag = document.createDocumentFragment();
+  lines.forEach((l, i) => {
+    const row = document.createElement('span');
+    row.className = 'fl' + (line && i + 1 === +line ? ' hl' : '');
+    const ln = document.createElement('span'); ln.className = 'ln'; ln.textContent = i + 1;
+    row.appendChild(ln);
+    row.appendChild(document.createTextNode(l));
+    frag.appendChild(row);
+  });
+  body.appendChild(frag);
+  $('fileView').classList.remove('hidden');
+  if (line) {
+    const hl = body.querySelector('.fl.hl');
+    if (hl) requestAnimationFrame(() => hl.scrollIntoView({ block: 'center' }));
+  } else body.scrollTop = 0;
+}
+$('fileClose').onclick = () => $('fileView').classList.add('hidden');
+$('chatScroll').addEventListener('click', e => {
+  const fp = e.target.closest('.fpath');
+  if (fp) { e.stopPropagation(); openFile(fp.dataset.path, fp.dataset.line); }
+});
+
+/* ── history: стари kimi сесии → resume в нов tmux ── */
+$('histBtn').onclick = async () => {
+  listView.classList.add('hidden'); newBtn.classList.add('hidden');
+  $('histView').classList.remove('hidden');
+  const rows = $('histRows');
+  rows.textContent = 'loading…';
+  try {
+    const { history } = await api('/api/history');
+    rows.innerHTML = '';
+    if (!history.length) rows.textContent = 'no past sessions';
+    for (const h of history) {
+      const b = document.createElement('button');
+      b.className = 'hrow';
+      const t = document.createElement('div'); t.className = 'ht'; t.textContent = h.title;
+      const m = document.createElement('div'); m.className = 'hm';
+      m.textContent = h.workDir + ' · ' + ago(h.updated);
+      b.append(t, m);
+      b.onclick = async () => {
+        if (!confirm('Resume "' + h.title.slice(0, 60) + '"?')) return;
+        b.disabled = true;
+        try {
+          const r = await api('/api/history/resume', { method: 'POST', body: JSON.stringify({ key: h.key }) });
+          $('histView').classList.add('hidden');
+          openSession(r.name);
+        } catch (e) { alert(e.message); b.disabled = false; }
+      };
+      rows.appendChild(b);
+    }
+  } catch (e) { rows.textContent = 'error: ' + e.message; }
+};
+$('histBack').onclick = () => { $('histView').classList.add('hidden'); showList(); };
+
+/* ── web push: 🔔 в header-а (иска user gesture на iOS) ── */
+async function pushSubscribed() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    return !!(await reg.pushManager.getSubscription());
+  } catch { return false; }
+}
+const BELL_ON = '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>';
+const BELL_OFF = '<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.7 3.6A6 6 0 0 1 18 8c0 4.5 1.2 7 2.2 8.2"/><path d="M6.3 6.3C6.1 6.8 6 7.4 6 8c0 7-3 9-3 9h13"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/><line x1="2" y1="2" x2="22" y2="22"/></svg>';
+async function refreshBell() {
+  const on = 'Notification' in window && Notification.permission === 'granted' && await pushSubscribed();
+  $('bellBtn').innerHTML = on ? BELL_ON : BELL_OFF;
+  $('bellBtn').classList.toggle('on', on);
+}
+$('bellBtn').onclick = async () => {
+  if (!('Notification' in window) || !('PushManager' in window)) {
+    alert('This browser has no Web Push (on iOS: open from the Home Screen icon, https).');
+    return;
+  }
+  const reg = await navigator.serviceWorker.ready;
+  const existing = await reg.pushManager.getSubscription();
+  if (existing) {
+    await api('/api/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint: existing.endpoint }) }).catch(() => {});
+    await existing.unsubscribe();
+    refreshBell();
+    return;
+  }
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') { refreshBell(); return; }
+  try {
+    const { key } = await api('/api/push/vapid');
+    const raw = Uint8Array.from(atob(key.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+    const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: raw });
+    await api('/api/push/subscribe', { method: 'POST', body: JSON.stringify({ subscription: sub.toJSON() }) });
+    await api('/api/push/test', { method: 'POST', body: '{}' }).catch(() => {});
+  } catch (e) { alert('Push: ' + e.message); }
+  refreshBell();
+};
+refreshBell();
+
+window.addEventListener('hashchange', route);
+route();
+</script>
+</body>
+</html>
