@@ -7,6 +7,10 @@ progress, push notifications and voice input. Zero npm dependencies.
 Think *Claude Remote / Codex Remote*, but for [Kimi CLI](https://kimi.com) —
 and it runs entirely on your own machine.
 
+| Sessions & quota | Live chat | Swarm dashboard |
+|---|---|---|
+| ![Sessions](docs/screenshot-sessions.png) | ![Chat](docs/screenshot-chat.png) | ![Swarm](docs/screenshot-swarm.png) |
+
 ## Highlights
 
 - **Live chat view** backed by the session's `wire.jsonl` — real events
@@ -68,6 +72,15 @@ cp .env.example .env         # set KIMI_REMOTE_TOKEN (any random string)
 
 Open the printed URL on your phone once (the `?token=` sets a year-long
 cookie), then *Share → Add to Home Screen*.
+
+### Remote access from anywhere
+
+The server binds to localhost plus your VPN/tailnet address. The nicest setup
+is [Tailscale](https://tailscale.com) (or any WireGuard-style VPN): install it
+on the machine and your phone, and the printed `http(s)://<machine>.<tailnet>`
+URL works from anywhere in the world — cellular included — without exposing
+anything to the public internet. On a plain home LAN set
+`KIMI_REMOTE_BIND=0.0.0.0` in `.env` and use the printed LAN URL instead.
 
 ### HTTPS (needed for mic + push on iOS)
 
