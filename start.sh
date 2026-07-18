@@ -30,15 +30,21 @@ else
   echo "• kimi-remote proxy already running"
 fi
 
+# LAN fallback: no tailscale → detect the local IP (needs KIMI_REMOTE_BIND=0.0.0.0 in .env)
+LAN_IP=$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}')
+
 echo
 echo "┌──────────────────────────────────────────────────────────────"
-echo "│ 📱 Open this URL on the phone (Tailscale must be on):"
+echo "│ 📱 Open this URL on the phone (same LAN / VPN / tailnet):"
 echo "│"
 if [ -n "$TS_DNS" ]; then
   echo "│   https://$TS_DNS:${KIMI_REMOTE_HTTPS_PORT:-7683}/?token=$KIMI_REMOTE_TOKEN   ← use THIS one (mic needs https)"
   echo "│   http://$TS_DNS:$PORT/?token=$KIMI_REMOTE_TOKEN"
-else
+elif [ -n "$TS_IP" ]; then
   echo "│   http://$TS_IP:$PORT/?token=$KIMI_REMOTE_TOKEN"
+elif [ -n "$LAN_IP" ]; then
+  echo "│   http://$LAN_IP:$PORT/?token=$KIMI_REMOTE_TOKEN"
+  grep -q '^KIMI_REMOTE_BIND=' .env || echo "│   (add KIMI_REMOTE_BIND=0.0.0.0 to .env so the phone can reach it)"
 fi
 echo "│"
 echo "│ Local test:  http://127.0.0.1:$PORT/?token=$KIMI_REMOTE_TOKEN"

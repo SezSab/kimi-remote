@@ -965,7 +965,8 @@ function renderSwarm(sw) {
   lastSwarm = sw;
   const bar = $('swarmBar'), panel = $('swarmPanel');
   const stick = nearBottom();
-  if (!sw || !sw.total) {
+  // swarm-ът е готов И основният turn е приключил → няма какво да показваме
+  if (!sw || !sw.total || (sw.done >= sw.total && !isWorking)) {
     bar.classList.add('hidden'); panel.classList.add('hidden');
     return;
   }

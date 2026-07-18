@@ -93,7 +93,8 @@ Soniox realtime STT and types the transcript into the input as you speak.
 | `KIMI_REMOTE_TOKEN` | — (required) | shared auth token → cookie |
 | `KIMI_REMOTE_PORT` | `7682` | HTTP port |
 | `KIMI_REMOTE_HTTPS_PORT` | `7683` | HTTPS port (when certs exist) |
-| `TAILSCALE_IP` | auto | extra bind address |
+| `TAILSCALE_IP` | auto | extra bind address (tailnet) |
+| `KIMI_REMOTE_BIND` | — | override bind, e.g. `0.0.0.0` for plain LAN |
 | `SONIOX_API_KEY` | — | enables voice input |
 
 ## API

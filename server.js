@@ -793,12 +793,18 @@ function swarmStatus(sessionDir) {
   let cache = swarmCache.get(sessionDir);
   if (!cache) { cache = new Map(); swarmCache.set(sessionDir, cache); }
   const now = Date.now();
-  const agents = [];
+  // един swarm run = ГРУПА: прагът е спрямо най-новия агент, не спрямо "сега" —
+  // иначе рано завършилите изпадат от бройката един по един (бъг: "6 agents ✓" при 10)
+  const stats = [];
+  let newest = 0;
   for (const id of ids) {
     const wf = path.join(dir, id, 'wire.jsonl');
-    let st;
-    try { st = fs.statSync(wf); } catch (_) { continue; }
-    if (now - st.mtimeMs > 10 * 60 * 1000) continue;       // стар swarm run — не е текущият
+    try { const st = fs.statSync(wf); stats.push([id, wf, st]); newest = Math.max(newest, st.mtimeMs); } catch (_) {}
+  }
+  if (!stats.length || now - newest > 10 * 60 * 1000) return null;   // няма скорошен swarm
+  const agents = [];
+  for (const [id, wf, st] of stats) {
+    if (newest - st.mtimeMs > 30 * 60 * 1000) continue;    // от предишен run в същата сесия
     let c = cache.get(id) || {};
     if (!c.mission) c.mission = agentMission(wf);
     if (c.mtime !== st.mtimeMs) {
@@ -1380,7 +1386,8 @@ function onUpgrade(req, socket, head) {
 }
 
 const binds = ['127.0.0.1'];
-if (TAILSCALE_IP) binds.push(TAILSCALE_IP);
+if (env.KIMI_REMOTE_BIND) binds.splice(0, 1, env.KIMI_REMOTE_BIND);   // e.g. 0.0.0.0 for plain LAN setups
+else if (TAILSCALE_IP) binds.push(TAILSCALE_IP);
 // clean orphaned ttyd processes from previous server instances
 // (they hold ports and would hijack other sessions' terminals)
 try { spawn('pkill', ['-f', 'ttyd '], { stdio: 'ignore' }); } catch (_) {}
